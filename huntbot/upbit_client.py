@@ -68,6 +68,17 @@ class UpbitClient:
         response.raise_for_status()
         return response.json()
 
+    def market_buy(self, market: str, price: str) -> dict:
+        body = {"market": market, "side": "bid", "ord_type": "price", "price": price}
+        response = self.session.post(
+            f"{self.server_url}/v1/orders",
+            json=body,
+            headers=self._auth_headers(body),
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def _auth_headers(self, params: dict) -> dict[str, str]:
         if not self.access_key or not self.secret_key:
             raise RuntimeError("Upbit API keys are missing. Create .env from .env.example.")

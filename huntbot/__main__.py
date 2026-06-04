@@ -8,7 +8,7 @@ from huntbot.indicators import rsi
 from huntbot.market_data import fetch_recent_candles
 from huntbot.models import StrategyConfig
 from huntbot.state import load_strategy, save_strategy
-from huntbot.trader import LIVE_CONFIRMATION, run_watch_once
+from huntbot.trader import BUY_CONFIRMATION, BUYBACK_BUY_RSI, BUYBACK_SELL_RSI, LIVE_CONFIRMATION, load_buyback_state, run_buyback_watch_once, run_watch_once
 from huntbot.upbit_client import UpbitClient
 
 
@@ -28,6 +28,12 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--live", action="store_true")
     watch.add_argument("--loop", action="store_true")
+
+    watch_buyback = subparsers.add_parser("watch-buyback-5m")
+    buyback_mode = watch_buyback.add_mutually_exclusive_group(required=True)
+    buyback_mode.add_argument("--dry-run", action="store_true")
+    buyback_mode.add_argument("--live", action="store_true")
+    watch_buyback.add_argument("--loop", action="store_true")
     return parser
 
 
@@ -52,6 +58,8 @@ def main() -> int:
         return 0
     if args.command == "watch":
         return run_watch_command(live=args.live, loop=args.loop)
+    if args.command == "watch-buyback-5m":
+        return run_buyback_watch_command(live=args.live, loop=args.loop)
     raise RuntimeError(f"unsupported command: {args.command}")
 
 
@@ -127,6 +135,38 @@ def run_watch_command(*, live: bool, loop: bool) -> int:
             f"action={result.action} rsi={result.rsi_value} "
             f"holding_value={result.holding_value.quantize(Decimal('1'))} "
             f"available_hunt={result.available_quantity} sell_quantity={result.sell_quantity} "
+            f"order_uuid={result.order_uuid}"
+        )
+        if not loop:
+            return 0
+        time.sleep(60)
+
+
+def run_buyback_watch_command(*, live: bool, loop: bool) -> int:
+    client = UpbitClient()
+    while True:
+        candles = fetch_recent_candles(client, MARKET, unit=5, pages=1)
+        current_rsi = rsi([float(candle.close) for candle in candles], period=RSI_PERIOD)[-1]
+        current_price = candles[-1].close
+        state = load_buyback_state()
+        confirm_phrase = None
+        if live:
+            required = LIVE_CONFIRMATION if state.phase == "ready_to_sell" else BUY_CONFIRMATION
+            print(f"Live order confirmation required. Type exactly: {required}")
+            confirm_phrase = input("> ").strip()
+        result = run_buyback_watch_once(
+            client=client,
+            rsi_value=current_rsi,
+            current_price=current_price,
+            live=live,
+            confirm_phrase=confirm_phrase,
+            state=state,
+        )
+        print(
+            f"mode=5m_buyback sell_rsi={BUYBACK_SELL_RSI} buy_rsi={BUYBACK_BUY_RSI} "
+            f"phase={state.phase} action={result.action} rsi={result.rsi_value} "
+            f"price={current_price} holding_value={result.holding_value.quantize(Decimal('1'))} "
+            f"available_hunt={result.available_quantity} amount={result.sell_quantity} "
             f"order_uuid={result.order_uuid}"
         )
         if not loop:

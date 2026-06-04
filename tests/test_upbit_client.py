@@ -47,3 +47,13 @@ def test_market_sell_uses_ask_market_volume():
     assert method == "POST"
     assert body == {"market": "KRW-HUNT", "side": "ask", "ord_type": "market", "volume": "123.45"}
     assert headers["Authorization"].startswith("Bearer ")
+
+
+def test_market_buy_uses_bid_price_amount():
+    session = FakeSession()
+    client = UpbitClient(access_key="access", secret_key="s" * 32, session=session)
+    client.market_buy("KRW-HUNT", "50000")
+    method, url, body, headers, timeout = session.calls[0]
+    assert method == "POST"
+    assert body == {"market": "KRW-HUNT", "side": "bid", "ord_type": "price", "price": "50000"}
+    assert headers["Authorization"].startswith("Bearer ")
