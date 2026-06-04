@@ -35,3 +35,17 @@ class BacktestResult:
     remaining_quantity: Decimal
     cash: Decimal
     max_drawdown_pct: float
+
+
+@dataclass(frozen=True)
+class BuybackBacktestResult:
+    unit: int
+    sell_rsi: float
+    buy_rsi: float
+    final_return_pct: float
+    final_total_value: Decimal
+    sell_count: int
+    buy_count: int
+    remaining_quantity: Decimal
+    cash: Decimal
+    max_drawdown_pct: float

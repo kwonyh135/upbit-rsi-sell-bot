@@ -2,7 +2,7 @@ import argparse
 import time
 from decimal import Decimal
 
-from huntbot.backtest import run_candidate_search
+from huntbot.backtest import run_buyback_candidate_search, run_candidate_search
 from huntbot.config import MARKET, RSI_PERIOD, load_environment
 from huntbot.indicators import rsi
 from huntbot.market_data import fetch_recent_candles
@@ -16,6 +16,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="huntbot")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("backtest")
+    subparsers.add_parser("backtest-buyback")
 
     select = subparsers.add_parser("select")
     select.add_argument("--unit", type=int, required=True)
@@ -36,6 +37,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "backtest":
         return run_backtest_command()
+    if args.command == "backtest-buyback":
+        return run_buyback_backtest_command()
     if args.command == "select":
         strategy = StrategyConfig(
             market=MARKET,
@@ -67,6 +70,36 @@ def run_backtest_command() -> int:
             f"{result.final_return_pct:.2f} {result.final_total_value.quantize(Decimal('1'))} "
             f"{result.sell_count} {result.cash.quantize(Decimal('1'))} "
             f"{result.remaining_quantity:.8f} {result.max_drawdown_pct:.2f}"
+        )
+    return 0
+
+
+def run_buyback_backtest_command() -> int:
+    client = UpbitClient()
+    pages_by_unit = {60: 22, 15: 88, 5: 264}
+    candles_by_unit = {
+        unit: fetch_recent_candles(client, MARKET, unit=unit, pages=pages)
+        for unit, pages in pages_by_unit.items()
+    }
+    results = run_buyback_candidate_search(candles_by_unit)
+    print("unit sell_rsi buy_rsi return_pct final_value sells buys cash remaining_hunt max_dd")
+    for result in results[:30]:
+        print(
+            f"{result.unit} {result.sell_rsi:.1f} {result.buy_rsi:.1f} "
+            f"{result.final_return_pct:.2f} {result.final_total_value.quantize(Decimal('1'))} "
+            f"{result.sell_count} {result.buy_count} {result.cash.quantize(Decimal('1'))} "
+            f"{result.remaining_quantity:.8f} {result.max_drawdown_pct:.2f}"
+        )
+    print("")
+    print("best_by_unit")
+    print("unit sell_rsi buy_rsi return_pct final_value sells buys cash remaining_hunt max_dd")
+    for unit in [60, 15, 5]:
+        best = next(result for result in results if result.unit == unit)
+        print(
+            f"{best.unit} {best.sell_rsi:.1f} {best.buy_rsi:.1f} "
+            f"{best.final_return_pct:.2f} {best.final_total_value.quantize(Decimal('1'))} "
+            f"{best.sell_count} {best.buy_count} {best.cash.quantize(Decimal('1'))} "
+            f"{best.remaining_quantity:.8f} {best.max_drawdown_pct:.2f}"
         )
     return 0
 
