@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from huntbot.indicators import rsi
-from huntbot.models import BacktestResult, BuybackBacktestResult, Candle, SplitBuybackBacktestResult
+from huntbot.models import BacktestResult, BuybackBacktestResult, Candle, SplitBuybackBacktestResult, TradeEvent
 from huntbot.strategy import CycleState, evaluate_sell_signal
 
 
@@ -166,6 +166,7 @@ def run_split_buyback_backtest(
     sell_count = 0
     buy_count = 0
     phase = "sell_1"
+    events: list[TradeEvent] = []
     rsi_values = rsi([float(candle.close) for candle in candles], period=14)
 
     for candle, rsi_value in zip(candles, rsi_values):
@@ -183,24 +184,38 @@ def run_split_buyback_backtest(
             cash += _sell_cash(sell_quantity, candle.close, fee_rate, slippage_rate)
             quantity -= sell_quantity
             sell_count += 1
+            events.append(
+                _trade_event("sell_1", candle, rsi_value, sell_quantity, cash, quantity, fee_rate, slippage_rate)
+            )
             phase = "sell_2"
         elif phase == "sell_2" and rsi_value >= sell_rsi_2:
             sell_quantity = quantity
             cash += _sell_cash(sell_quantity, candle.close, fee_rate, slippage_rate)
             quantity = Decimal("0")
             sell_count += 1
+            events.append(
+                _trade_event("sell_2", candle, rsi_value, sell_quantity, cash, quantity, fee_rate, slippage_rate)
+            )
             phase = "buy_1"
         elif phase == "buy_1" and rsi_value <= buy_rsi_1:
             spend = cash / Decimal("2")
-            quantity += _buy_quantity(spend, candle.close, fee_rate, slippage_rate)
+            bought_quantity = _buy_quantity(spend, candle.close, fee_rate, slippage_rate)
+            quantity += bought_quantity
             cash -= spend
             buy_count += 1
+            events.append(
+                _trade_event("buy_1", candle, rsi_value, bought_quantity, cash, quantity, fee_rate, slippage_rate)
+            )
             phase = "buy_2"
         elif phase == "buy_2" and rsi_value <= buy_rsi_2:
             spend = cash
-            quantity += _buy_quantity(spend, candle.close, fee_rate, slippage_rate)
+            bought_quantity = _buy_quantity(spend, candle.close, fee_rate, slippage_rate)
+            quantity += bought_quantity
             cash = Decimal("0")
             buy_count += 1
+            events.append(
+                _trade_event("buy_2", candle, rsi_value, bought_quantity, cash, quantity, fee_rate, slippage_rate)
+            )
             phase = "sell_1"
 
     final_total_value = cash + (quantity * candles[-1].close)
@@ -218,6 +233,7 @@ def run_split_buyback_backtest(
         remaining_quantity=quantity,
         cash=cash,
         max_drawdown_pct=round(max_drawdown_pct, 6),
+        events=tuple(events),
     )
 
 
@@ -256,3 +272,32 @@ def _buy_quantity(krw_amount: Decimal, close_price: Decimal, fee_rate: Decimal, 
     trade_value = krw_amount / (Decimal("1") + fee_rate)
     effective_price = close_price * (Decimal("1") + slippage_rate)
     return trade_value / effective_price
+
+
+def _trade_event(
+    action: str,
+    candle: Candle,
+    rsi_value: float,
+    quantity: Decimal,
+    cash: Decimal,
+    remaining_quantity: Decimal,
+    fee_rate: Decimal,
+    slippage_rate: Decimal,
+) -> TradeEvent:
+    if action.startswith("sell"):
+        effective_price = candle.close * (Decimal("1") - slippage_rate)
+    else:
+        effective_price = candle.close * (Decimal("1") + slippage_rate)
+    total_value = cash + (remaining_quantity * candle.close)
+    return TradeEvent(
+        action=action,
+        timestamp=candle.timestamp,
+        unit=candle.unit,
+        rsi_value=round(rsi_value, 6),
+        close_price=candle.close,
+        effective_price=effective_price,
+        quantity=quantity,
+        cash=cash,
+        remaining_quantity=remaining_quantity,
+        total_value=total_value,
+    )

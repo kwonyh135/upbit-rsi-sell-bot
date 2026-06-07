@@ -65,6 +65,9 @@ def test_split_buyback_backtest_sells_and_buys_in_two_steps():
     assert result.buy_count == 2
     assert result.cash == Decimal("0")
     assert result.remaining_quantity > Decimal("0")
+    assert [event.action for event in result.events] == ["sell_1", "sell_2", "buy_1", "buy_2"]
+    assert result.events[0].rsi_value >= 65.0
+    assert result.events[-1].action == "buy_2"
 
 
 def test_split_buyback_fee_and_slippage_reduce_final_value():

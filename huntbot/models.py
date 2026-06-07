@@ -65,3 +65,18 @@ class SplitBuybackBacktestResult:
     remaining_quantity: Decimal
     cash: Decimal
     max_drawdown_pct: float
+    events: tuple["TradeEvent", ...] = ()
+
+
+@dataclass(frozen=True)
+class TradeEvent:
+    action: str
+    timestamp: datetime
+    unit: int
+    rsi_value: float
+    close_price: Decimal
+    effective_price: Decimal
+    quantity: Decimal
+    cash: Decimal
+    remaining_quantity: Decimal
+    total_value: Decimal
