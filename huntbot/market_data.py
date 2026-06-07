@@ -19,9 +19,15 @@ def parse_candle(raw: dict, *, unit: int) -> Candle:
     )
 
 
-def fetch_recent_candles(client: UpbitClient, market: str, *, unit: int, pages: int) -> list[Candle]:
+def fetch_recent_candles(
+    client: UpbitClient,
+    market: str,
+    *,
+    unit: int,
+    pages: int,
+    to: str | None = None,
+) -> list[Candle]:
     candles: list[Candle] = []
-    to: str | None = None
     for _ in range(pages):
         raw_page = client.get_minute_candles(market, unit=unit, count=200, to=to)
         if not raw_page:

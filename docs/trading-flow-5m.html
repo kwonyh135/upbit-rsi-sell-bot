@@ -150,8 +150,10 @@
       height: 38px;
       background: var(--ink);
     }
-    .mark.buy-mark { left: 49%; background: var(--buy); }
-    .mark.sell-mark { left: 65%; background: var(--sell); }
+    .mark.buy-mark-1 { left: 45%; background: var(--buy); }
+    .mark.buy-mark-2 { left: 40%; background: var(--buy); }
+    .mark.sell-mark-1 { left: 60%; background: var(--sell); }
+    .mark.sell-mark-2 { left: 65%; background: var(--sell); }
     .legend {
       display: flex;
       justify-content: space-between;
@@ -196,14 +198,14 @@
 <body>
   <header>
     <h1>KRW-HUNT 5분봉 RSI 자동매매 흐름</h1>
-    <p class="subtitle">백테스트 최고 조합인 RSI 65 매도, RSI 49 재매수를 실거래 모드에 적용한 실행 구조입니다. live 주문은 확인 문구 입력 전에는 나가지 않습니다.</p>
+    <p class="subtitle">수수료 0.05%와 시장가 슬리피지 0.05%를 반영한 2단계 분할 백테스트 기준 흐름입니다. live 주문은 확인 문구 입력 전에는 나가지 않습니다.</p>
   </header>
   <main>
     <section class="metrics" aria-label="strategy summary">
       <div class="metric"><span>캔들 기준</span><strong>5분봉</strong></div>
-      <div class="metric"><span>매도 조건</span><strong>RSI >= 65</strong></div>
-      <div class="metric"><span>재매수 조건</span><strong>RSI <= 49</strong></div>
-      <div class="metric"><span>백테스트 수익률</span><strong>134.21%</strong></div>
+      <div class="metric"><span>매도 조건</span><strong>60 / 65</strong></div>
+      <div class="metric"><span>재매수 조건</span><strong>45 / 40</strong></div>
+      <div class="metric"><span>백테스트 수익률</span><strong>314.94%</strong></div>
     </section>
 
     <section class="diagram" aria-label="trading flow">
@@ -214,18 +216,18 @@
         </div>
         <div class="arrow"></div>
         <div class="node sell">
-          <h2>2. RSI 65 이상</h2>
-          <p>매도 대기 상태에서 RSI가 65 이상이면 보유 HUNT의 50% 시장가 매도 신호가 발생합니다. live에서는 <code>SELL KRW-HUNT</code> 확인이 필요합니다.</p>
+          <h2>2. RSI 60 / 65 매도</h2>
+          <p>RSI 60 이상에서 1차로 HUNT 50%를 매도하고, RSI 65 이상에서 남은 HUNT를 2차 매도합니다. live에서는 <code>SELL KRW-HUNT</code> 확인이 필요합니다.</p>
         </div>
         <div class="arrow"></div>
         <div class="node wait">
           <h2>3. 현금 대기</h2>
-          <p>매도 후 예상 확보 금액을 상태 파일에 기록하고 재매수 대기 상태로 전환합니다. 같은 과열 구간에서 중복 매도하지 않습니다.</p>
+          <p>매도 후 확보된 현금을 상태 파일에 기록하고 재매수 대기 상태로 전환합니다. 백테스트는 수수료 0.05%와 슬리피지 0.05%를 차감합니다.</p>
         </div>
         <div class="arrow"></div>
         <div class="node buy">
-          <h2>4. RSI 49 이하</h2>
-          <p>RSI가 49 이하로 내려오면 기록된 현금 한도 안에서 시장가 재매수 신호가 발생합니다. live에서는 <code>BUY KRW-HUNT</code> 확인이 필요합니다.</p>
+          <h2>4. RSI 45 / 40 매수</h2>
+          <p>RSI 45 이하에서 현금 50%를 1차 재매수하고, RSI 40 이하에서 남은 현금을 2차 재매수합니다. live에서는 <code>BUY KRW-HUNT</code> 확인이 필요합니다.</p>
         </div>
       </div>
     </section>
@@ -233,8 +235,8 @@
     <section class="bands" aria-label="rsi bands">
       <div class="band">
         <h3>RSI 구간</h3>
-        <div class="scale"><span class="mark buy-mark"></span><span class="mark sell-mark"></span></div>
-        <div class="legend"><span>49 이하 매수</span><span>65 이상 매도</span></div>
+        <div class="scale"><span class="mark buy-mark-1"></span><span class="mark buy-mark-2"></span><span class="mark sell-mark-1"></span><span class="mark sell-mark-2"></span></div>
+        <div class="legend"><span>45/40 이하 매수</span><span>60/65 이상 매도</span></div>
       </div>
       <div class="band">
         <h3>실행 명령</h3>
@@ -261,11 +263,11 @@
       <tbody>
         <tr>
           <td>5분</td>
-          <td>65</td>
-          <td>49</td>
-          <td>7,026,287원</td>
-          <td>345회</td>
-          <td>수수료와 슬리피지 반영 전 결과입니다.</td>
+          <td>60 / 65</td>
+          <td>45 / 40</td>
+          <td>12,448,348원</td>
+          <td>494 / 493회</td>
+          <td>수수료 0.05%와 슬리피지 0.05% 반영 결과입니다.</td>
         </tr>
       </tbody>
     </table>

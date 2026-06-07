@@ -41,3 +41,25 @@ The 5-minute buyback mode uses the best simulated 5-minute thresholds:
 - Buyback amount: limited to the estimated KRW cash recorded after the last bot sell.
 
 Open `docs/trading-flow-5m.html` in a browser to view the trading flow diagram.
+
+## Split Buyback Backtest
+
+Run:
+
+```powershell
+python -m huntbot backtest-split-buyback
+```
+
+This command evaluates two-step sell and two-step buyback RSI combinations through `2026-06-07 23:59:59 KST`, applying:
+
+- Upbit KRW market fee assumption: `0.05%`
+- Market-order slippage assumption: `0.05%`
+- Initial HUNT valuation: `3,000,000 KRW`
+
+Best result by unit from the latest run:
+
+| Unit | Sell 1 | Sell 2 | Buy 1 | Buy 2 | Return | Final Value |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 5m | 60 | 65 | 45 | 40 | 314.94% | 12,448,348 KRW |
+| 15m | 60 | 65 | 47 | 42 | 120.08% | 6,602,295 KRW |
+| 60m | 62 | 67 | 46 | 41 | 64.70% | 4,940,922 KRW |
