@@ -167,6 +167,7 @@ def run_split_buyback_backtest(
     buy_count = 0
     phase = "sell_1"
     events: list[TradeEvent] = []
+    average_price = first_price
     rsi_values = rsi([float(candle.close) for candle in candles], period=14)
 
     for candle, rsi_value in zip(candles, rsi_values):
@@ -181,40 +182,101 @@ def run_split_buyback_backtest(
 
         if phase == "sell_1" and rsi_value >= sell_rsi_1:
             sell_quantity = quantity / Decimal("2")
-            cash += _sell_cash(sell_quantity, candle.close, fee_rate, slippage_rate)
+            sell_cash = _sell_cash(sell_quantity, candle.close, fee_rate, slippage_rate)
+            realized_profit = sell_cash - (sell_quantity * average_price)
+            cash += sell_cash
             quantity -= sell_quantity
             sell_count += 1
             events.append(
-                _trade_event("sell_1", candle, rsi_value, sell_quantity, cash, quantity, fee_rate, slippage_rate)
+                _trade_event(
+                    "sell_1",
+                    candle,
+                    rsi_value,
+                    sell_quantity,
+                    cash,
+                    quantity,
+                    fee_rate,
+                    slippage_rate,
+                    average_price,
+                    realized_profit,
+                )
             )
             phase = "sell_2"
         elif phase == "sell_2" and rsi_value >= sell_rsi_2:
             sell_quantity = quantity
-            cash += _sell_cash(sell_quantity, candle.close, fee_rate, slippage_rate)
+            sell_cash = _sell_cash(sell_quantity, candle.close, fee_rate, slippage_rate)
+            realized_profit = sell_cash - (sell_quantity * average_price)
+            cash += sell_cash
             quantity = Decimal("0")
             sell_count += 1
             events.append(
-                _trade_event("sell_2", candle, rsi_value, sell_quantity, cash, quantity, fee_rate, slippage_rate)
+                _trade_event(
+                    "sell_2",
+                    candle,
+                    rsi_value,
+                    sell_quantity,
+                    cash,
+                    quantity,
+                    fee_rate,
+                    slippage_rate,
+                    average_price,
+                    realized_profit,
+                )
             )
+            average_price = Decimal("0")
             phase = "buy_1"
         elif phase == "buy_1" and rsi_value <= buy_rsi_1:
             spend = cash / Decimal("2")
             bought_quantity = _buy_quantity(spend, candle.close, fee_rate, slippage_rate)
+            average_price = _weighted_average_price(
+                current_quantity=quantity,
+                current_average_price=average_price,
+                bought_quantity=bought_quantity,
+                spend=spend,
+            )
             quantity += bought_quantity
             cash -= spend
             buy_count += 1
             events.append(
-                _trade_event("buy_1", candle, rsi_value, bought_quantity, cash, quantity, fee_rate, slippage_rate)
+                _trade_event(
+                    "buy_1",
+                    candle,
+                    rsi_value,
+                    bought_quantity,
+                    cash,
+                    quantity,
+                    fee_rate,
+                    slippage_rate,
+                    average_price,
+                    Decimal("0"),
+                )
             )
             phase = "buy_2"
         elif phase == "buy_2" and rsi_value <= buy_rsi_2:
             spend = cash
             bought_quantity = _buy_quantity(spend, candle.close, fee_rate, slippage_rate)
+            average_price = _weighted_average_price(
+                current_quantity=quantity,
+                current_average_price=average_price,
+                bought_quantity=bought_quantity,
+                spend=spend,
+            )
             quantity += bought_quantity
             cash = Decimal("0")
             buy_count += 1
             events.append(
-                _trade_event("buy_2", candle, rsi_value, bought_quantity, cash, quantity, fee_rate, slippage_rate)
+                _trade_event(
+                    "buy_2",
+                    candle,
+                    rsi_value,
+                    bought_quantity,
+                    cash,
+                    quantity,
+                    fee_rate,
+                    slippage_rate,
+                    average_price,
+                    Decimal("0"),
+                )
             )
             phase = "sell_1"
 
@@ -274,6 +336,19 @@ def _buy_quantity(krw_amount: Decimal, close_price: Decimal, fee_rate: Decimal, 
     return trade_value / effective_price
 
 
+def _weighted_average_price(
+    *,
+    current_quantity: Decimal,
+    current_average_price: Decimal,
+    bought_quantity: Decimal,
+    spend: Decimal,
+) -> Decimal:
+    total_quantity = current_quantity + bought_quantity
+    if total_quantity == 0:
+        return Decimal("0")
+    return ((current_quantity * current_average_price) + spend) / total_quantity
+
+
 def _trade_event(
     action: str,
     candle: Candle,
@@ -283,6 +358,8 @@ def _trade_event(
     remaining_quantity: Decimal,
     fee_rate: Decimal,
     slippage_rate: Decimal,
+    average_price: Decimal,
+    realized_profit: Decimal,
 ) -> TradeEvent:
     if action.startswith("sell"):
         effective_price = candle.close * (Decimal("1") - slippage_rate)
@@ -300,4 +377,6 @@ def _trade_event(
         cash=cash,
         remaining_quantity=remaining_quantity,
         total_value=total_value,
+        average_price=average_price,
+        realized_profit=realized_profit,
     )

@@ -102,7 +102,7 @@ def _html_document(
       <table>
         <thead>
           <tr>
-            <th>시간 UTC</th><th>액션</th><th>RSI</th><th>종가</th><th>체결가정가</th><th>수량</th><th>현금</th><th>HUNT</th><th>평가금액</th>
+            <th>시간 UTC</th><th>액션</th><th>RSI</th><th>종가</th><th>체결가정가</th><th>평단가</th><th>실현손익</th><th>수량</th><th>현금</th><th>HUNT</th><th>평가금액</th>
           </tr>
         </thead>
         <tbody>
@@ -129,6 +129,8 @@ def _event_row(event: TradeEvent) -> str:
         f"<td>{event.rsi_value:.2f}</td>"
         f"<td>{_krw(event.close_price)}</td>"
         f"<td>{_krw(event.effective_price)}</td>"
+        f"<td>{_krw(event.average_price)}</td>"
+        f"<td>{_krw(event.realized_profit)}</td>"
         f"<td>{event.quantity:.8f}</td>"
         f"<td>{_krw(event.cash)}</td>"
         f"<td>{event.remaining_quantity:.8f}</td>"
