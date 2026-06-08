@@ -1,14 +1,16 @@
 import argparse
 import time
 from decimal import Decimal
+from pathlib import Path
 
-from huntbot.backtest import run_buyback_candidate_search, run_candidate_search
+from huntbot.backtest import run_buyback_candidate_search, run_candidate_search, run_split_buyback_backtest, run_split_buyback_candidate_search
 from huntbot.config import MARKET, RSI_PERIOD, load_environment
 from huntbot.indicators import rsi
 from huntbot.market_data import fetch_recent_candles
 from huntbot.models import StrategyConfig
+from huntbot.reporting import render_split_buyback_report
 from huntbot.state import load_strategy, save_strategy
-from huntbot.trader import LIVE_CONFIRMATION, run_watch_once
+from huntbot.trader import BUY_CONFIRMATION, BUYBACK_BUY_RSI, BUYBACK_SELL_RSI, LIVE_CONFIRMATION, load_buyback_state, run_buyback_watch_once, run_watch_once
 from huntbot.upbit_client import UpbitClient
 
 
@@ -17,6 +19,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("backtest")
     subparsers.add_parser("backtest-buyback")
+    subparsers.add_parser("backtest-split-buyback")
+    subparsers.add_parser("report-split-5m")
 
     select = subparsers.add_parser("select")
     select.add_argument("--unit", type=int, required=True)
@@ -28,6 +32,12 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--live", action="store_true")
     watch.add_argument("--loop", action="store_true")
+
+    watch_buyback = subparsers.add_parser("watch-buyback-5m")
+    buyback_mode = watch_buyback.add_mutually_exclusive_group(required=True)
+    buyback_mode.add_argument("--dry-run", action="store_true")
+    buyback_mode.add_argument("--live", action="store_true")
+    watch_buyback.add_argument("--loop", action="store_true")
     return parser
 
 
@@ -39,6 +49,10 @@ def main() -> int:
         return run_backtest_command()
     if args.command == "backtest-buyback":
         return run_buyback_backtest_command()
+    if args.command == "backtest-split-buyback":
+        return run_split_buyback_backtest_command()
+    if args.command == "report-split-5m":
+        return run_split_5m_report_command()
     if args.command == "select":
         strategy = StrategyConfig(
             market=MARKET,
@@ -52,6 +66,8 @@ def main() -> int:
         return 0
     if args.command == "watch":
         return run_watch_command(live=args.live, loop=args.loop)
+    if args.command == "watch-buyback-5m":
+        return run_buyback_watch_command(live=args.live, loop=args.loop)
     raise RuntimeError(f"unsupported command: {args.command}")
 
 
@@ -104,6 +120,70 @@ def run_buyback_backtest_command() -> int:
     return 0
 
 
+def run_split_buyback_backtest_command() -> int:
+    client = UpbitClient()
+    pages_by_unit = {60: 22, 15: 88, 5: 264}
+    end_at_utc = "2026-06-07T14:59:59"
+    candles_by_unit = {
+        unit: fetch_recent_candles(client, MARKET, unit=unit, pages=pages, to=end_at_utc)
+        for unit, pages in pages_by_unit.items()
+    }
+    results = run_split_buyback_candidate_search(candles_by_unit)
+    print("fee_rate 0.0005")
+    print("slippage_rate 0.0005")
+    print("data_through_kst 2026-06-07 23:59:59")
+    print("unit sell1 sell2 buy1 buy2 return_pct final_value sells buys cash remaining_hunt max_dd")
+    for result in results[:30]:
+        print(
+            f"{result.unit} {result.sell_rsi_1:.1f} {result.sell_rsi_2:.1f} "
+            f"{result.buy_rsi_1:.1f} {result.buy_rsi_2:.1f} "
+            f"{result.final_return_pct:.2f} {result.final_total_value.quantize(Decimal('1'))} "
+            f"{result.sell_count} {result.buy_count} {result.cash.quantize(Decimal('1'))} "
+            f"{result.remaining_quantity:.8f} {result.max_drawdown_pct:.2f}"
+        )
+    print("")
+    print("best_by_unit")
+    print("unit sell1 sell2 buy1 buy2 return_pct final_value sells buys cash remaining_hunt max_dd")
+    for unit in [60, 15, 5]:
+        best = next(result for result in results if result.unit == unit)
+        print(
+            f"{best.unit} {best.sell_rsi_1:.1f} {best.sell_rsi_2:.1f} "
+            f"{best.buy_rsi_1:.1f} {best.buy_rsi_2:.1f} "
+            f"{best.final_return_pct:.2f} {best.final_total_value.quantize(Decimal('1'))} "
+            f"{best.sell_count} {best.buy_count} {best.cash.quantize(Decimal('1'))} "
+            f"{best.remaining_quantity:.8f} {best.max_drawdown_pct:.2f}"
+        )
+    return 0
+
+
+def run_split_5m_report_command() -> int:
+    client = UpbitClient()
+    end_at_utc = "2026-06-07T14:59:59"
+    candles = fetch_recent_candles(client, MARKET, unit=5, pages=264, to=end_at_utc)
+    result = run_split_buyback_backtest(
+        candles,
+        sell_rsi_1=60.0,
+        sell_rsi_2=65.0,
+        buy_rsi_1=45.0,
+        buy_rsi_2=40.0,
+    )
+    output_path = Path("docs/split-buyback-events-5m.html")
+    render_split_buyback_report(
+        result=result,
+        output_path=output_path,
+        data_through_kst="2026-06-07 23:59:59",
+        fee_rate=Decimal("0.0005"),
+        slippage_rate=Decimal("0.0005"),
+        recent_days=90,
+    )
+    print(f"Wrote {output_path}")
+    print(
+        f"summary unit=5 sell=60/65 buy=45/40 return={result.final_return_pct:.2f}% "
+        f"final_value={result.final_total_value.quantize(Decimal('1'))} events={len(result.events)}"
+    )
+    return 0
+
+
 def run_watch_command(*, live: bool, loop: bool) -> int:
     client = UpbitClient()
     while True:
@@ -127,6 +207,38 @@ def run_watch_command(*, live: bool, loop: bool) -> int:
             f"action={result.action} rsi={result.rsi_value} "
             f"holding_value={result.holding_value.quantize(Decimal('1'))} "
             f"available_hunt={result.available_quantity} sell_quantity={result.sell_quantity} "
+            f"order_uuid={result.order_uuid}"
+        )
+        if not loop:
+            return 0
+        time.sleep(60)
+
+
+def run_buyback_watch_command(*, live: bool, loop: bool) -> int:
+    client = UpbitClient()
+    while True:
+        candles = fetch_recent_candles(client, MARKET, unit=5, pages=1)
+        current_rsi = rsi([float(candle.close) for candle in candles], period=RSI_PERIOD)[-1]
+        current_price = candles[-1].close
+        state = load_buyback_state()
+        confirm_phrase = None
+        if live:
+            required = LIVE_CONFIRMATION if state.phase == "ready_to_sell" else BUY_CONFIRMATION
+            print(f"Live order confirmation required. Type exactly: {required}")
+            confirm_phrase = input("> ").strip()
+        result = run_buyback_watch_once(
+            client=client,
+            rsi_value=current_rsi,
+            current_price=current_price,
+            live=live,
+            confirm_phrase=confirm_phrase,
+            state=state,
+        )
+        print(
+            f"mode=5m_buyback sell_rsi={BUYBACK_SELL_RSI} buy_rsi={BUYBACK_BUY_RSI} "
+            f"phase={state.phase} action={result.action} rsi={result.rsi_value} "
+            f"price={current_price} holding_value={result.holding_value.quantize(Decimal('1'))} "
+            f"available_hunt={result.available_quantity} amount={result.sell_quantity} "
             f"order_uuid={result.order_uuid}"
         )
         if not loop:

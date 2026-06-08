@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from huntbot.backtest import run_backtest, run_buyback_backtest
+from huntbot.backtest import run_backtest, run_buyback_backtest, run_split_buyback_backtest
 from huntbot.models import Candle
 
 
@@ -46,3 +46,51 @@ def test_buyback_backtest_rebuys_cash_when_rsi_falls_to_buy_threshold():
     assert result.sell_count == 1
     assert result.buy_count == 1
     assert result.cash == Decimal("0")
+
+
+def test_split_buyback_backtest_sells_and_buys_in_two_steps():
+    closes = [100] * 15 + [120, 140, 160, 150, 130, 110, 95, 85, 100]
+    candles = [candle(i, str(close)) for i, close in enumerate(closes)]
+    result = run_split_buyback_backtest(
+        candles,
+        sell_rsi_1=65.0,
+        sell_rsi_2=75.0,
+        buy_rsi_1=49.0,
+        buy_rsi_2=39.0,
+        fee_rate=Decimal("0"),
+        slippage_rate=Decimal("0"),
+        initial_krw=Decimal("3000000"),
+    )
+    assert result.sell_count == 2
+    assert result.buy_count == 2
+    assert result.cash == Decimal("0")
+    assert result.remaining_quantity > Decimal("0")
+    assert [event.action for event in result.events] == ["sell_1", "sell_2", "buy_1", "buy_2"]
+    assert result.events[0].rsi_value >= 65.0
+    assert result.events[-1].action == "buy_2"
+
+
+def test_split_buyback_fee_and_slippage_reduce_final_value():
+    closes = [100] * 15 + [120, 140, 160, 150, 130, 110, 95, 85, 100]
+    candles = [candle(i, str(close)) for i, close in enumerate(closes)]
+    no_cost = run_split_buyback_backtest(
+        candles,
+        sell_rsi_1=65.0,
+        sell_rsi_2=75.0,
+        buy_rsi_1=49.0,
+        buy_rsi_2=39.0,
+        fee_rate=Decimal("0"),
+        slippage_rate=Decimal("0"),
+        initial_krw=Decimal("3000000"),
+    )
+    with_cost = run_split_buyback_backtest(
+        candles,
+        sell_rsi_1=65.0,
+        sell_rsi_2=75.0,
+        buy_rsi_1=49.0,
+        buy_rsi_2=39.0,
+        fee_rate=Decimal("0.0005"),
+        slippage_rate=Decimal("0.0005"),
+        initial_krw=Decimal("3000000"),
+    )
+    assert with_cost.final_total_value < no_cost.final_total_value
