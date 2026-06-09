@@ -51,6 +51,35 @@ After sending an order:
 
 The bot must never blindly resend an order after a timeout or ambiguous API response. On restart, it resolves the stored pending order through Upbit before evaluating another signal.
 
+## Emergency Crash Protection
+
+Emergency crash protection has higher priority than every RSI phase.
+
+The bot polls every 10 seconds and compares the current price against:
+
+- The highest price from the latest five Upbit 1-minute candles.
+- The HUNT average buy price returned by the Upbit account API.
+
+An emergency condition is present when either:
+
+- Current price is at least 7% below the latest five-minute high.
+- Current price is at least 10% below the Upbit average buy price.
+
+The same condition must be observed twice consecutively, 10 seconds apart. A healthy observation resets the consecutive count.
+
+When confirmed:
+
+1. Block normal RSI signal processing.
+2. Verify that available HUNT is positive and no order is already pending.
+3. Submit a market sell for all available HUNT.
+4. Persist and reconcile the order through the same pending-order flow as normal trades.
+5. Move to `emergency_halt` only after the sell is confirmed complete.
+6. Send Telegram notifications for detection, order submission, completion, or reconciliation failure.
+
+While `emergency_halt` is active, all automatic buys and normal RSI sells are disabled. Recovery requires an explicit local command that verifies there is no pending order before resetting the phase to `sell_1`. Telegram remote commands cannot unlock the bot.
+
+If minute-candle data is empty, stale, or insufficient, the bot does not estimate a crash percentage. It pauses emergency evaluation for that cycle and reports the data error.
+
 ## Telegram Notifications
 
 Configuration is stored only in `.env`:
@@ -104,10 +133,12 @@ Keep the existing commands:
 Add the following separate unattended command:
 
 ```powershell
-python -m huntbot run-auto-5m
+python -m huntbot run-auto-5m --dry-run
+python -m huntbot run-auto-5m --dry-run --once
+python -m huntbot run-auto-5m --live
 ```
 
-This separation prevents accidental conversion of the interactive command into unattended live trading.
+The mode flag is required. `--once` performs one read-only cycle and exits, and is available only for verification and diagnostics. This separation prevents accidental conversion of the interactive command into unattended live trading, and the scheduled task must explicitly include `--live`.
 
 ## Testing
 
@@ -124,6 +155,12 @@ Automated tests cover:
 - Telegram failure isolation from trading state.
 - Atomic state persistence.
 - Task Scheduler command generation or installation script behavior without creating a real task during unit tests.
+- Five-minute high and average-buy-price emergency thresholds.
+- Two consecutive emergency observations and healthy-observation reset.
+- Emergency priority over RSI orders.
+- Full-balance emergency market sell.
+- `emergency_halt` blocking every normal order.
+- Local-only emergency unlock validation.
 
 Before unattended live activation:
 
