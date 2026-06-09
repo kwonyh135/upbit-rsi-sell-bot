@@ -57,8 +57,10 @@ class UpbitClient:
         response.raise_for_status()
         return response.json()
 
-    def market_sell(self, market: str, volume: str) -> dict:
+    def market_sell(self, market: str, volume: str, *, identifier: str | None = None) -> dict:
         body = {"market": market, "side": "ask", "ord_type": "market", "volume": volume}
+        if identifier:
+            body["identifier"] = identifier
         response = self.session.post(
             f"{self.server_url}/v1/orders",
             json=body,
@@ -68,12 +70,27 @@ class UpbitClient:
         response.raise_for_status()
         return response.json()
 
-    def market_buy(self, market: str, price: str) -> dict:
+    def market_buy(self, market: str, price: str, *, identifier: str | None = None) -> dict:
         body = {"market": market, "side": "bid", "ord_type": "price", "price": price}
+        if identifier:
+            body["identifier"] = identifier
         response = self.session.post(
             f"{self.server_url}/v1/orders",
             json=body,
             headers=self._auth_headers(body),
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_order(self, *, uuid: str | None = None, identifier: str | None = None) -> dict:
+        if bool(uuid) == bool(identifier):
+            raise ValueError("provide exactly one of uuid or identifier")
+        params = {"uuid": uuid} if uuid else {"identifier": identifier}
+        response = self.session.get(
+            f"{self.server_url}/v1/order",
+            params=params,
+            headers=self._auth_headers(params),
             timeout=10,
         )
         response.raise_for_status()

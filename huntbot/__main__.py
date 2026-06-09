@@ -4,13 +4,27 @@ from decimal import Decimal
 from pathlib import Path
 
 from huntbot.backtest import run_buyback_candidate_search, run_candidate_search, run_split_buyback_backtest, run_split_buyback_candidate_search
+from huntbot.auto_service import SingleInstanceLock, run_auto_service, unlock_emergency
+from huntbot.auto_state import AUTO_STATE_PATH
 from huntbot.config import MARKET, RSI_PERIOD, load_environment
 from huntbot.indicators import rsi
 from huntbot.market_data import fetch_recent_candles
 from huntbot.models import StrategyConfig
 from huntbot.reporting import render_split_buyback_report
 from huntbot.state import load_strategy, save_strategy
-from huntbot.trader import BUY_CONFIRMATION, BUYBACK_BUY_RSI, BUYBACK_SELL_RSI, LIVE_CONFIRMATION, load_buyback_state, run_buyback_watch_once, run_watch_once
+from huntbot.trader import (
+    BUY_CONFIRMATION,
+    BUYBACK_BUY_RSI_1,
+    BUYBACK_BUY_RSI_2,
+    BUYBACK_SELL_RSI_1,
+    BUYBACK_SELL_RSI_2,
+    LIVE_CONFIRMATION,
+    load_buyback_state,
+    required_buyback_confirmation,
+    run_buyback_watch_once,
+    run_watch_once,
+    sync_buyback_state,
+)
 from huntbot.upbit_client import UpbitClient
 
 
@@ -21,6 +35,13 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("backtest-buyback")
     subparsers.add_parser("backtest-split-buyback")
     subparsers.add_parser("report-split-5m")
+    subparsers.add_parser("sync-buyback-state")
+    run_auto = subparsers.add_parser("run-auto-5m")
+    auto_mode = run_auto.add_mutually_exclusive_group(required=True)
+    auto_mode.add_argument("--dry-run", action="store_true")
+    auto_mode.add_argument("--live", action="store_true")
+    run_auto.add_argument("--once", action="store_true")
+    subparsers.add_parser("unlock-emergency")
 
     select = subparsers.add_parser("select")
     select.add_argument("--unit", type=int, required=True)
@@ -53,6 +74,18 @@ def main() -> int:
         return run_split_buyback_backtest_command()
     if args.command == "report-split-5m":
         return run_split_5m_report_command()
+    if args.command == "sync-buyback-state":
+        return run_sync_buyback_state_command()
+    if args.command == "run-auto-5m":
+        if args.live and args.once:
+            parser.error("--once is available only with --dry-run")
+        with SingleInstanceLock():
+            return run_auto_service(client=UpbitClient(), live=args.live, once=args.once)
+    if args.command == "unlock-emergency":
+        print("Emergency unlock confirmation required. Type exactly: UNLOCK KRW-HUNT")
+        state = unlock_emergency(state_path=AUTO_STATE_PATH, confirmation=input("> ").strip())
+        print(f"Emergency halt cleared. phase={state.phase}")
+        return 0
     if args.command == "select":
         strategy = StrategyConfig(
             market=MARKET,
@@ -184,6 +217,19 @@ def run_split_5m_report_command() -> int:
     return 0
 
 
+def run_sync_buyback_state_command() -> int:
+    client = UpbitClient()
+    before = load_buyback_state()
+    result = sync_buyback_state(client=client)
+    after = load_buyback_state()
+    print(
+        f"mode=5m_buyback_sync phase_before={before.phase} phase_after={after.phase} "
+        f"action={result.action} available_hunt={result.available_quantity} "
+        f"amount={result.sell_quantity} order_uuid={result.order_uuid}"
+    )
+    return 0
+
+
 def run_watch_command(*, live: bool, loop: bool) -> int:
     client = UpbitClient()
     while True:
@@ -221,11 +267,13 @@ def run_buyback_watch_command(*, live: bool, loop: bool) -> int:
         current_rsi = rsi([float(candle.close) for candle in candles], period=RSI_PERIOD)[-1]
         current_price = candles[-1].close
         state = load_buyback_state()
+        accounts = client.get_accounts() if live else None
         confirm_phrase = None
         if live:
-            required = LIVE_CONFIRMATION if state.phase == "ready_to_sell" else BUY_CONFIRMATION
-            print(f"Live order confirmation required. Type exactly: {required}")
-            confirm_phrase = input("> ").strip()
+            required = required_buyback_confirmation(state, accounts or [], rsi_value=current_rsi)
+            if required:
+                print(f"Live order confirmation required. Type exactly: {required}")
+                confirm_phrase = input("> ").strip()
         result = run_buyback_watch_once(
             client=client,
             rsi_value=current_rsi,
@@ -233,9 +281,11 @@ def run_buyback_watch_command(*, live: bool, loop: bool) -> int:
             live=live,
             confirm_phrase=confirm_phrase,
             state=state,
+            accounts=accounts,
         )
         print(
-            f"mode=5m_buyback sell_rsi={BUYBACK_SELL_RSI} buy_rsi={BUYBACK_BUY_RSI} "
+            f"mode=5m_buyback sell_rsi={BUYBACK_SELL_RSI_1:.0f}/{BUYBACK_SELL_RSI_2:.0f} "
+            f"buy_rsi={BUYBACK_BUY_RSI_1:.0f}/{BUYBACK_BUY_RSI_2:.0f} "
             f"phase={state.phase} action={result.action} rsi={result.rsi_value} "
             f"price={current_price} holding_value={result.holding_value.quantize(Decimal('1'))} "
             f"available_hunt={result.available_quantity} amount={result.sell_quantity} "

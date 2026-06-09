@@ -57,3 +57,25 @@ def test_market_buy_uses_bid_price_amount():
     assert method == "POST"
     assert body == {"market": "KRW-HUNT", "side": "bid", "ord_type": "price", "price": "50000"}
     assert headers["Authorization"].startswith("Bearer ")
+
+
+def test_market_orders_include_optional_identifier():
+    session = FakeSession()
+    client = UpbitClient(access_key="access", secret_key="s" * 32, session=session)
+
+    client.market_sell("KRW-HUNT", "10", identifier="huntbot-sell-1")
+    client.market_buy("KRW-HUNT", "5000", identifier="huntbot-buy-1")
+
+    assert session.calls[0][2]["identifier"] == "huntbot-sell-1"
+    assert session.calls[1][2]["identifier"] == "huntbot-buy-1"
+
+
+def test_get_order_uses_uuid_or_identifier():
+    session = FakeSession()
+    client = UpbitClient(access_key="access", secret_key="s" * 32, session=session)
+
+    client.get_order(uuid="order-1")
+    client.get_order(identifier="huntbot-buy-1")
+
+    assert session.calls[0][2] == {"uuid": "order-1"}
+    assert session.calls[1][2] == {"identifier": "huntbot-buy-1"}

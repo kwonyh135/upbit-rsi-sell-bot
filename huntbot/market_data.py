@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from huntbot.models import Candle
@@ -37,3 +37,13 @@ def fetch_recent_candles(
         to = oldest
     unique = {candle.timestamp: candle for candle in candles}
     return [unique[key] for key in sorted(unique)]
+
+
+def fetch_latest_candles(client: UpbitClient, market: str, *, unit: int, count: int) -> list[Candle]:
+    raw = client.get_minute_candles(market, unit=unit, count=count)
+    return sorted((parse_candle(item, unit=unit) for item in raw), key=lambda item: item.timestamp)
+
+
+def latest_completed_candle(candles: list[Candle], *, unit: int, now: datetime) -> Candle | None:
+    completed = [candle for candle in candles if candle.timestamp + timedelta(minutes=unit) <= now]
+    return max(completed, key=lambda item: item.timestamp) if completed else None
