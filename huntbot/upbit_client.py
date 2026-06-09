@@ -37,6 +37,17 @@ class UpbitClient:
         time.sleep(0.12)
         return response.json()
 
+    def get_orderbook(self, market: str, *, count: int = 1) -> dict:
+        response = self.session.get(
+            f"{self.server_url}/v1/orderbook",
+            params={"markets": market, "count": count},
+            timeout=10,
+        )
+        response.raise_for_status()
+        time.sleep(0.12)
+        payload = response.json()
+        return payload[0] if payload else {}
+
     def get_accounts(self) -> list[dict]:
         response = self.session.get(
             f"{self.server_url}/v1/accounts",

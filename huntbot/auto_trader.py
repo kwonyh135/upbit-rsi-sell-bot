@@ -161,9 +161,15 @@ def run_auto_cycle(
     average_buy_price = Decimal(str(hunt_account.get("avg_buy_price", "0")))
     krw_balance = Decimal(str(krw_account.get("balance", "0")))
 
-    minute_candles = fetch_latest_candles(client, MARKET, unit=1, count=5)
-    current_price = minute_candles[-1].close if minute_candles else None
-    if current_price is None:
+    orderbook = client.get_orderbook(MARKET, count=1)
+    orderbook_units = orderbook.get("orderbook_units", [])
+    current_price = (
+        Decimal(str(orderbook_units[0].get("bid_price", "0")))
+        if orderbook_units
+        else None
+    )
+    orderbook_timestamp = orderbook.get("timestamp")
+    if current_price is None or orderbook_timestamp is None:
         return AutoCycleResult(
             "data_error",
             state.phase,
@@ -175,9 +181,15 @@ def run_auto_cycle(
             None,
             None,
         )
+    current_price_timestamp = datetime.fromtimestamp(
+        int(orderbook_timestamp) / 1000,
+        tz=timezone.utc,
+    )
+    minute_candles = fetch_latest_candles(client, MARKET, unit=1, count=5)
     risk = evaluate_crash_risk(
         minute_candles=minute_candles,
         current_price=current_price,
+        current_price_timestamp=current_price_timestamp,
         average_buy_price=average_buy_price,
         previous_confirmations=state.emergency_confirmations,
         now=now,

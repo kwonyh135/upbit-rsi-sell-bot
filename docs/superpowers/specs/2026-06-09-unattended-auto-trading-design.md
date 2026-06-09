@@ -55,9 +55,9 @@ The bot must never blindly resend an order after a timeout or ambiguous API resp
 
 Emergency crash protection has higher priority than every RSI phase.
 
-The bot polls every 10 seconds and compares the current price against:
+The bot polls every 10 seconds and compares the current best bid from the Upbit orderbook against:
 
-- The highest price from the latest five Upbit 1-minute candles.
+- The highest traded price inside the latest five-minute time window.
 - The HUNT average buy price returned by the Upbit account API.
 
 An emergency condition is present when either:
@@ -78,7 +78,7 @@ When confirmed:
 
 While `emergency_halt` is active, all automatic buys and normal RSI sells are disabled. Recovery requires an explicit local command that verifies there is no pending order before resetting the phase to `sell_1`. Telegram remote commands cannot unlock the bot.
 
-If minute-candle data is empty, stale, or insufficient, the bot does not estimate a crash percentage. It pauses emergency evaluation for that cycle and reports the data error.
+Upbit omits 1-minute candles when no trade occurs. Those gaps are allowed: candles outside the five-minute time window are ignored, and the current best bid remains available from the orderbook. If the orderbook price is missing, invalid, or stale, the bot pauses emergency evaluation for that cycle and reports the data error.
 
 ## Telegram Notifications
 

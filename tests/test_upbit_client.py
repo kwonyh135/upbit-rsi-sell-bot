@@ -39,6 +39,19 @@ def test_public_candles_do_not_include_auth_header():
     assert headers is None
 
 
+def test_public_orderbook_requests_best_level_without_auth_header():
+    session = FakeSession()
+    client = UpbitClient(access_key="access", secret_key="s" * 32, session=session)
+
+    client.get_orderbook("KRW-HUNT", count=1)
+
+    method, url, params, headers, timeout = session.calls[0]
+    assert method == "GET"
+    assert url.endswith("/v1/orderbook")
+    assert params == {"markets": "KRW-HUNT", "count": 1}
+    assert headers is None
+
+
 def test_market_sell_uses_ask_market_volume():
     session = FakeSession()
     client = UpbitClient(access_key="access", secret_key="s" * 32, session=session)

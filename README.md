@@ -112,8 +112,9 @@ Logs are written to `logs/huntbot-auto.log`.
 
 Emergency protection has priority over RSI trading:
 
-- Current price is at least `7%` below the highest price in the latest five 1-minute candles, or
+- Best bid is at least `7%` below the highest traded price in the latest five-minute time window, or
 - Current price is at least `10%` below the Upbit HUNT average buy price.
+- The best bid comes from Upbit's current orderbook, so missing 1-minute candles during no-trade periods do not stop the bot.
 - The risk must be observed twice consecutively, 10 seconds apart.
 - The first risky observation already blocks normal RSI orders.
 - A confirmed risk sells all available HUNT at market.

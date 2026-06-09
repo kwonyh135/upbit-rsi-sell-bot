@@ -21,24 +21,23 @@ def evaluate_crash_risk(
     *,
     minute_candles: list[Candle],
     current_price: Decimal,
+    current_price_timestamp: datetime,
     average_buy_price: Decimal,
     previous_confirmations: int,
     now: datetime,
 ) -> CrashRiskResult:
-    if len(minute_candles) < 5:
-        return _data_error("insufficient_minute_candles", previous_confirmations)
-    recent = sorted(minute_candles, key=lambda item: item.timestamp)[-5:]
-    if len({candle.timestamp for candle in recent}) < 5:
-        return _data_error("duplicate_minute_candles", previous_confirmations)
-    latest_timestamp = recent[-1].timestamp
-    if now - latest_timestamp > timedelta(minutes=2):
-        return _data_error("stale_minute_candles", previous_confirmations)
-    if now - recent[0].timestamp > timedelta(minutes=5):
-        return _data_error("incomplete_five_minute_window", previous_confirmations)
     if current_price <= 0:
         return _data_error("invalid_current_price", previous_confirmations)
+    if now - current_price_timestamp > timedelta(minutes=2):
+        return _data_error("stale_current_price", previous_confirmations)
 
-    recent_high = max(candle.high for candle in recent)
+    window_start = now - timedelta(minutes=5)
+    recent = [
+        candle
+        for candle in minute_candles
+        if window_start <= candle.timestamp <= now
+    ]
+    recent_high = max([current_price, *(candle.high for candle in recent)])
     high_drop_pct = _percentage_drop(recent_high, current_price)
     average_loss_pct = None
     if average_buy_price > 0:

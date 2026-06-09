@@ -198,6 +198,13 @@ class FakeCycleClient(FakeOrderClient):
             {"currency": "KRW", "balance": "1000000", "avg_buy_price": "0"},
         ]
 
+    def get_orderbook(self, market, *, count=1):
+        return {
+            "market": market,
+            "timestamp": int(self.now.timestamp() * 1000),
+            "orderbook_units": [{"bid_price": 100, "ask_price": 101}],
+        }
+
     def get_minute_candles(self, market, *, unit, count=200, to=None):
         if unit == 1:
             return [
@@ -250,6 +257,26 @@ def test_auto_cycle_confirms_crash_before_rsi_and_dry_run_never_orders(tmp_path)
     assert result.status == "dry_run"
     assert result.risk_confirmed is True
     assert client.orders == []
+
+
+def test_auto_cycle_uses_best_bid_as_current_price(tmp_path):
+    path = tmp_path / "auto.json"
+    client = FakeCycleClient()
+    client.get_orderbook = lambda market, count=1: {
+        "market": market,
+        "timestamp": int(client.now.timestamp() * 1000),
+        "orderbook_units": [{"bid_price": 99, "ask_price": 100}],
+    }
+
+    result = run_auto_cycle(
+        client=client,
+        notifier=FakeNotifier(),
+        state_path=path,
+        live=False,
+        now=client.now,
+    )
+
+    assert result.current_price == Decimal("99")
 
 
 def test_first_crash_observation_blocks_normal_rsi_order(tmp_path):
