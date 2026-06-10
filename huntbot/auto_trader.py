@@ -82,6 +82,8 @@ def select_auto_action(
         return AutoAction("sell_2", "sell", hunt_balance, "buy_1", candle_timestamp, rsi_value, "rsi")
     if state.phase == "buy_1" and rsi_value <= 45 and krw_balance > 0:
         return AutoAction("buy_1", "buy", krw_balance / Decimal("2"), "buy_2", candle_timestamp, rsi_value, "rsi")
+    if state.phase == "buy_2" and rsi_value >= 60 and hunt_balance > 0:
+        return AutoAction("sell_1", "sell", hunt_balance / Decimal("2"), "sell_2", candle_timestamp, rsi_value, "rsi")
     if state.phase == "buy_2" and rsi_value <= 40 and krw_balance > 0:
         fee_safe_amount = krw_balance / (Decimal("1") + bid_fee)
         return AutoAction("buy_2", "buy", fee_safe_amount, "sell_1", candle_timestamp, rsi_value, "rsi")
@@ -346,14 +348,16 @@ def reconcile_pending_order(
         updated_state = replace(state, pending_order=updated_pending)
         save_auto_state(updated_state, state_path)
         return OrderWorkflowResult("pending", updated_state, order_uuid)
-    if order_state != "done":
+    trades = order.get("trades", [])
+    executed_volume = Decimal(str(order.get("executed_volume", "0")))
+    completed_with_fills = order_state == "cancel" and (bool(trades) or executed_volume > 0)
+    if order_state != "done" and not completed_with_fills:
         return OrderWorkflowResult("unresolved", state, order_uuid)
 
-    trades = order.get("trades", [])
     executed_quantity = sum((Decimal(str(item.get("volume", "0"))) for item in trades), Decimal("0"))
     executed_funds = sum((Decimal(str(item.get("funds", "0"))) for item in trades), Decimal("0"))
     if not trades:
-        executed_quantity = Decimal(str(order.get("executed_volume", "0")))
+        executed_quantity = executed_volume
     average_price = executed_funds / executed_quantity if executed_quantity > 0 else Decimal("0")
     next_state = AutoTradeState(
         phase=pending.next_phase,

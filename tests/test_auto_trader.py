@@ -122,6 +122,24 @@ def test_normal_split_actions_use_current_balances():
     assert sell_1.requested_amount == Decimal("500")
 
 
+def test_buy_2_phase_sells_half_when_rsi_reaches_first_sell_threshold():
+    action = select_auto_action(
+        state=AutoTradeState(phase="buy_2"),
+        rsi_value=60,
+        candle_timestamp="c3",
+        emergency_confirmed=False,
+        emergency_reason=None,
+        hunt_balance=Decimal("1200"),
+        krw_balance=Decimal("100000"),
+        bid_fee=Decimal("0.0005"),
+    )
+
+    assert action.action == "sell_1"
+    assert action.side == "sell"
+    assert action.requested_amount == Decimal("600")
+    assert action.next_phase == "sell_2"
+
+
 def test_same_completed_candle_is_not_processed_twice():
     assert select_auto_action(
         state=AutoTradeState(phase="sell_1", last_completed_candle="c1"),
@@ -185,6 +203,34 @@ def test_waiting_order_remains_pending_and_blocks_resubmit(tmp_path):
     assert result.status == "pending"
     assert load_auto_state(path).pending_order.uuid == "order-1"
     assert len(client.orders) == 1
+
+
+def test_cancelled_market_buy_with_fills_completes_and_advances_phase(tmp_path):
+    path = tmp_path / "auto.json"
+    client = FakeOrderClient(order_state="cancel")
+    pending = PendingOrder(
+        "huntbot-buy_1-id",
+        "buy_1",
+        "buy_2",
+        "c1",
+        39.9,
+        Decimal("1437547"),
+        uuid="order-1",
+    )
+    state = AutoTradeState(phase="buy_1", pending_order=pending)
+    save_auto_state(state, path)
+
+    result = reconcile_pending_order(
+        client=client,
+        notifier=FakeNotifier(),
+        state=state,
+        state_path=path,
+    )
+
+    assert result.status == "done"
+    assert result.executed_quantity == Decimal("100")
+    assert load_auto_state(path).phase == "buy_2"
+    assert load_auto_state(path).pending_order is None
 
 
 class FakeCycleClient(FakeOrderClient):
