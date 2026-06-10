@@ -20,6 +20,7 @@ class PerformanceSummary:
     is_partial: bool
     max_drawdown_pct: Decimal | None
     realized_curve: tuple[tuple[str, Decimal], ...]
+    trade_details: tuple[dict, ...]
 
 
 def calculate_performance(
@@ -42,6 +43,7 @@ def calculate_performance(
     buy_count = 0
     sell_count = 0
     realized_curve = []
+    trade_details = []
 
     ordered = sorted(
         trades,
@@ -58,24 +60,58 @@ def calculate_performance(
             buy_count += 1
             quantity += volume
             inventory_cost += funds + fee
+            trade_details.append(
+                {
+                    "uuid": trade.get("uuid", ""),
+                    "timestamp": trade.get("completed_at")
+                    or trade.get("created_at")
+                    or "",
+                    "action": trade.get("action", ""),
+                    "side": "buy",
+                    "execution_price": (
+                        funds / volume if volume > 0 else Decimal("0")
+                    ),
+                    "quantity": volume,
+                    "gross_amount": funds,
+                    "fee": fee,
+                    "cost_basis_price": None,
+                    "realized_pnl": None,
+                }
+            )
         else:
             cumulative_sell += funds
             sell_volume += volume
             sell_count += 1
             matched = min(quantity, volume)
+            unit_cost = inventory_cost / quantity if quantity > 0 else None
+            trade_realized = Decimal("0")
             if matched > 0 and quantity > 0:
-                unit_cost = inventory_cost / quantity
                 proceeds = (funds - fee) * (matched / volume) if volume > 0 else Decimal("0")
-                realized += proceeds - unit_cost * matched
+                trade_realized = proceeds - unit_cost * matched
+                realized += trade_realized
                 inventory_cost -= unit_cost * matched
                 quantity -= matched
             unmatched += volume - matched
-        realized_curve.append(
-            (
-                trade.get("completed_at") or trade.get("created_at") or "",
-                realized,
+            timestamp = (
+                trade.get("completed_at") or trade.get("created_at") or ""
             )
-        )
+            trade_details.append(
+                {
+                    "uuid": trade.get("uuid", ""),
+                    "timestamp": timestamp,
+                    "action": trade.get("action", ""),
+                    "side": "sell",
+                    "execution_price": (
+                        funds / volume if volume > 0 else Decimal("0")
+                    ),
+                    "quantity": volume,
+                    "gross_amount": funds,
+                    "fee": fee,
+                    "cost_basis_price": unit_cost,
+                    "realized_pnl": trade_realized,
+                }
+            )
+            realized_curve.append((timestamp, realized))
 
     unrealized = current_hunt * (best_bid - average_buy_price)
     total_pnl = realized + unrealized
@@ -103,6 +139,7 @@ def calculate_performance(
         is_partial=unmatched > 0,
         max_drawdown_pct=_max_drawdown(account_values or []),
         realized_curve=tuple(realized_curve),
+        trade_details=tuple(trade_details),
     )
 
 

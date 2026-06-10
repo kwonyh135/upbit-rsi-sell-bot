@@ -36,6 +36,14 @@ def test_performance_uses_fees_and_moving_average_cost():
     assert result.unrealized_pnl == Decimal("300")
     assert result.total_pnl == Decimal("399.4")
     assert result.is_partial is False
+    sell = result.trade_details[-1]
+    assert sell["cost_basis_price"] == Decimal("110.055")
+    assert sell["execution_price"] == Decimal("130")
+    assert sell["gross_amount"] == Decimal("650")
+    assert sell["realized_pnl"] == Decimal("99.4")
+    assert result.realized_curve == (
+        ("2026-06-10T03:00:00+00:00", Decimal("99.4")),
+    )
 
 
 def test_sell_without_known_inventory_marks_realized_pnl_partial():
@@ -53,6 +61,7 @@ def test_sell_without_known_inventory_marks_realized_pnl_partial():
     assert result.realized_pnl == Decimal("0")
     assert result.unmatched_sell_quantity == Decimal("5")
     assert result.is_partial is True
+    assert result.trade_details[0]["realized_pnl"] == Decimal("0")
 
 
 def test_drawdown_requires_enough_time_span():

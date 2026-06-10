@@ -260,6 +260,10 @@ def _render_charts(st, alt, pd, orders, candles, snapshots, summary) -> None:
         price = pd.DataFrame(
             {
                 "시각": [item["timestamp"] for item in candles],
+                "시가": [float(item["open"]) for item in candles],
+                "고가": [float(item["high"]) for item in candles],
+                "저가": [float(item["low"]) for item in candles],
+                "종가": [float(item["close"]) for item in candles],
                 "가격": [float(item["close"]) for item in candles],
                 "RSI": [item["rsi"] for item in candles],
             }
@@ -267,30 +271,73 @@ def _render_charts(st, alt, pd, orders, candles, snapshots, summary) -> None:
         price["시각"] = pd.to_datetime(price["시각"])
         trade_rows = [
             {
-                "시각": item["completed_at"],
-                "가격": float(item["average_price"]),
+                "시각": item["timestamp"],
+                "체결가": float(item["execution_price"]),
                 "구분": item["action"],
                 "방향": "매수" if item["side"] == "buy" else "매도",
+                "수량": float(item["quantity"]),
+                "총 체결금액": float(item["gross_amount"]),
+                "수수료": float(item["fee"]),
+                "매도 전 평단가": (
+                    float(item["cost_basis_price"])
+                    if item["cost_basis_price"] is not None
+                    else None
+                ),
+                "해당 매도 실현손익": (
+                    float(item["realized_pnl"])
+                    if item["realized_pnl"] is not None
+                    else None
+                ),
             }
-            for item in orders
-            if item["completed_at"]
+            for item in summary.trade_details
+            if item["timestamp"]
         ]
         trades = pd.DataFrame(trade_rows)
-        price_domain = chart_domain(price["가격"].tolist(), padding_ratio=0.08)
-        line = alt.Chart(price).mark_line(color="#4361a8").encode(
+        domain_values = [
+            *price["저가"].tolist(),
+            *price["고가"].tolist(),
+            *([*trades["체결가"].tolist()] if not trades.empty else []),
+        ]
+        price_domain = chart_domain(domain_values, padding_ratio=0.08)
+        candle_colors = alt.condition(
+            "datum['종가'] >= datum['시가']",
+            alt.value("#2d7d67"),
+            alt.value("#b44b4b"),
+        )
+        candle_range = alt.Chart(price).mark_rule().encode(
             x=alt.X("시각:T", title=None),
             y=alt.Y(
-                "가격:Q",
+                "저가:Q",
                 title="KRW",
                 scale=alt.Scale(domain=list(price_domain), zero=False),
             ),
+            y2="고가:Q",
+            color=candle_colors,
+            tooltip=[
+                alt.Tooltip("시각:T", title="5분봉"),
+                alt.Tooltip("시가:Q", title="시가", format=",.2f"),
+                alt.Tooltip("고가:Q", title="고가", format=",.2f"),
+                alt.Tooltip("저가:Q", title="저가", format=",.2f"),
+                alt.Tooltip("종가:Q", title="종가", format=",.2f"),
+            ],
         )
-        chart = line
+        candle_body = alt.Chart(price).mark_bar(size=5).encode(
+            x=alt.X("시각:T", title=None),
+            y=alt.Y(
+                "시가:Q",
+                scale=alt.Scale(domain=list(price_domain), zero=False),
+            ),
+            y2="종가:Q",
+            color=candle_colors,
+        )
+        chart = candle_range + candle_body
         if not trades.empty:
             trades["시각"] = pd.to_datetime(trades["시각"])
-            points = alt.Chart(trades).mark_point(size=90, filled=True).encode(
+            trade_rules = alt.Chart(trades).mark_rule(
+                strokeDash=[3, 3],
+                opacity=0.35,
+            ).encode(
                 x="시각:T",
-                y="가격:Q",
                 color=alt.Color(
                     "방향:N",
                     scale=alt.Scale(
@@ -298,11 +345,57 @@ def _render_charts(st, alt, pd, orders, candles, snapshots, summary) -> None:
                         range=["#2d7d67", "#b44b4b"],
                     ),
                 ),
-                shape=alt.Shape("구분:N"),
-                tooltip=["시각:T", "구분:N", "가격:Q"],
             )
-            chart += points
-        st.altair_chart(chart.properties(title="HUNT 가격과 체결 지점", height=340), use_container_width=True)
+            points = alt.Chart(trades).mark_circle(
+                size=120,
+                stroke="white",
+                strokeWidth=1.5,
+            ).encode(
+                x="시각:T",
+                y=alt.Y(
+                    "체결가:Q",
+                    scale=alt.Scale(domain=list(price_domain), zero=False),
+                ),
+                color=alt.Color(
+                    "방향:N",
+                    scale=alt.Scale(
+                        domain=["매수", "매도"],
+                        range=["#2d7d67", "#b44b4b"],
+                    ),
+                ),
+                tooltip=[
+                    alt.Tooltip(
+                        "시각:T",
+                        title="체결 시각",
+                        format="%Y-%m-%d %H:%M:%S",
+                    ),
+                    alt.Tooltip("구분:N", title="구분"),
+                    alt.Tooltip("방향:N", title="매수/매도"),
+                    alt.Tooltip("체결가:Q", title="체결가", format=",.4f"),
+                    alt.Tooltip("수량:Q", title="체결 수량", format=",.4f"),
+                    alt.Tooltip(
+                        "총 체결금액:Q",
+                        title="총 체결금액",
+                        format=",.0f",
+                    ),
+                    alt.Tooltip("수수료:Q", title="수수료", format=",.0f"),
+                    alt.Tooltip(
+                        "매도 전 평단가:Q",
+                        title="매도 전 평단가",
+                        format=",.4f",
+                    ),
+                    alt.Tooltip(
+                        "해당 매도 실현손익:Q",
+                        title="해당 매도 실현손익",
+                        format=",.0f",
+                    ),
+                ],
+            )
+            chart += trade_rules + points
+        st.altair_chart(
+            chart.properties(title="HUNT 5분봉과 체결 지점", height=380),
+            use_container_width=True,
+        )
 
         rsi_values = [float(value) for value in price["RSI"].dropna().tolist()]
         rsi_domain = chart_domain(
@@ -324,21 +417,36 @@ def _render_charts(st, alt, pd, orders, candles, snapshots, summary) -> None:
         )
         st.altair_chart((rsi_chart + rules).properties(title="RSI 14", height=260), use_container_width=True)
 
-    curve = pd.DataFrame(summary.realized_curve, columns=["시각", "누적 실현 손익"])
+    curve = pd.DataFrame(summary.realized_curve, columns=["시각", "누적 실현손익"])
     if not curve.empty:
         curve["시각"] = pd.to_datetime(curve["시각"])
+        curve["누적 실현손익"] = curve["누적 실현손익"].astype(float)
         pnl_domain = chart_domain(
-            curve["누적 실현 손익"].astype(float).tolist(),
+            curve["누적 실현손익"].tolist(),
             padding_ratio=0.12,
         )
-        pnl_chart = alt.Chart(curve).mark_line(color="#2d7d67").encode(
+        pnl_chart = alt.Chart(curve).mark_line(
+            color="#2d7d67",
+            point=alt.OverlayMarkDef(filled=True, size=80),
+        ).encode(
             x=alt.X("시각:T", title=None),
             y=alt.Y(
-                "누적 실현 손익:Q",
+                "누적 실현손익:Q",
                 title="KRW",
                 scale=alt.Scale(domain=list(pnl_domain), zero=False),
             ),
-            tooltip=["시각:T", "누적 실현 손익:Q"],
+            tooltip=[
+                alt.Tooltip(
+                    "시각:T",
+                    title="매도 시각",
+                    format="%Y-%m-%d %H:%M:%S",
+                ),
+                alt.Tooltip(
+                    "누적 실현손익:Q",
+                    title="누적 실현손익",
+                    format=",.0f",
+                ),
+            ],
         )
         st.altair_chart(
             pnl_chart.properties(title="누적 실현손익", height=260),
