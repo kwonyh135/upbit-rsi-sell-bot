@@ -140,6 +140,24 @@ def test_buy_2_phase_sells_half_when_rsi_reaches_first_sell_threshold():
     assert action.next_phase == "sell_2"
 
 
+def test_sell_2_phase_rebuys_half_available_krw_when_rsi_falls_to_45():
+    action = select_auto_action(
+        state=AutoTradeState(phase="sell_2"),
+        rsi_value=45,
+        candle_timestamp="c4",
+        emergency_confirmed=False,
+        emergency_reason=None,
+        hunt_balance=Decimal("600"),
+        krw_balance=Decimal("1500000"),
+        bid_fee=Decimal("0.0005"),
+    )
+
+    assert action.action == "buy_1"
+    assert action.side == "buy"
+    assert action.requested_amount == Decimal("750000")
+    assert action.next_phase == "buy_2"
+
+
 def test_same_completed_candle_is_not_processed_twice():
     assert select_auto_action(
         state=AutoTradeState(phase="sell_1", last_completed_candle="c1"),

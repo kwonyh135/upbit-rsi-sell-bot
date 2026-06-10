@@ -101,6 +101,7 @@ The 5-minute buyback mode uses the best simulated 5-minute split thresholds:
 - First buyback signal: RSI 14 is `45` or lower, buying with 50% of the current Upbit KRW balance.
 - Second buyback signal: RSI 14 is `40` or lower, buying with the remaining fee-safe Upbit KRW balance.
 - If RSI recovers to `60` before the second buy, the bot starts the sell cycle with the HUNT already acquired.
+- If RSI falls back to `45` after the first sell but before the second sell, the bot spends 50% of available KRW on a new first buy.
 - New KRW deposits are included in the next buy step.
 
 Open `docs/trading-flow-5m.html` in a browser to view the trading flow diagram.
