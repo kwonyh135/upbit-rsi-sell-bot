@@ -24,6 +24,23 @@ def next_action_text(phase: str) -> str:
     }.get(phase, "상태를 확인할 수 없습니다")
 
 
+def chart_domain(
+    values: list[float],
+    *,
+    padding_ratio: float = 0.1,
+    fallback: tuple[float, float] = (0, 1),
+) -> tuple[float, float]:
+    if not values:
+        return fallback
+    minimum = min(values)
+    maximum = max(values)
+    if minimum == maximum:
+        padding = max(abs(minimum) * 0.01, 1.0)
+    else:
+        padding = (maximum - minimum) * padding_ratio
+    return minimum - padding, maximum + padding
+
+
 def main() -> None:
     import altair as alt
     import pandas as pd
@@ -41,87 +58,97 @@ def main() -> None:
     collector = DashboardCollector(client=UpbitClient(), store=store)
 
     st.title("HUNT 자동매매 운영 대시보드")
-    st.caption("읽기 전용 · KRW-HUNT · 15초 자동 새로고침 · localhost 전용")
+    st.caption("읽기 전용 · KRW-HUNT · localhost 전용")
     view = st.segmented_control(
         "보기",
-        ["거래 및 성과", "차트", "계산 기준"],
+        ["거래 및 성과", "계산 기준"],
         default="거래 및 성과",
         label_visibility="collapsed",
     )
+    refresh = st.button("새로고침", type="primary")
+    if refresh or "dashboard_data" not in st.session_state:
+        st.session_state.dashboard_data = _collect_dashboard_data(collector, store)
 
-    @st.fragment(run_every="15s")
-    def render_dashboard():
-        now = datetime.now(timezone.utc)
-        runtime = inspect_runtime(
-            state_path=AUTO_STATE_PATH,
-            log_path=AUTO_LOG_PATH,
-            now=now,
+    data = st.session_state.dashboard_data
+    runtime = data["runtime"]
+    collection = data["collection"]
+    snapshot = collection["snapshot"]
+    orders = data["orders"]
+    snapshots = data["snapshots"]
+    candles = data["candles"]
+    performance = data["performance"]
+
+    _render_freshness(st, runtime, collection, store)
+    _render_current_status(st, runtime, snapshot)
+    if data["sync_error"]:
+        st.warning(
+            f"주문 동기화 실패: 마지막 정상 거래 데이터를 표시합니다. "
+            f"{data['sync_error']}"
         )
-        sync_error = None
-        try:
-            collector.sync_orders(now=now, log_path=AUTO_LOG_PATH)
-        except Exception as exc:
-            sync_error = f"{type(exc).__name__}: {exc}"
-            store.set_meta("last_error", sync_error)
-        collection = collector.collect_market_snapshot(now=now)
-        snapshot = collection["snapshot"]
-        orders = store.list_orders(newest_first=True)
-        snapshots = store.list_account_snapshots()
-        candles = store.list_candles()
+    elif data["sync_warning"]:
+        st.info(
+            "종료 주문 목록 권한을 사용할 수 없어 로컬 로그의 UUID로 "
+            "주문 상세를 동기화했습니다."
+        )
 
-        _render_freshness(st, runtime, collection, store)
-        _render_current_status(st, runtime, snapshot)
-        if sync_error:
-            st.warning(f"주문 동기화 실패: 마지막 정상 거래 데이터를 표시합니다. {sync_error}")
-        elif store.get_meta("last_order_sync_warning"):
-            st.info(
-                "종료 주문 목록 권한을 사용할 수 없어 로컬 로그의 UUID로 "
-                "주문 상세를 동기화했습니다."
-            )
+    if view == "거래 및 성과":
+        _render_performance(st, performance)
+        _render_trade_history(st, pd, orders)
+        _render_charts(st, alt, pd, orders, candles, snapshots, performance)
+    else:
+        _render_methodology(st, performance)
 
-        if snapshot:
-            performance = calculate_performance(
-                list(reversed(orders)),
-                current_hunt=snapshot["hunt_balance"],
-                average_buy_price=snapshot["average_buy_price"],
-                best_bid=snapshot["best_bid"],
-                account_values=[
-                    (item["collected_at"], item["account_value"])
-                    for item in snapshots
-                ],
-            )
-        else:
-            performance = calculate_performance(
-                [],
-                current_hunt=Decimal("0"),
-                average_buy_price=Decimal("0"),
-                best_bid=Decimal("0"),
-            )
 
-        if view == "거래 및 성과":
-            _render_performance(st, performance)
-            _render_trade_history(st, pd, orders)
-        elif view == "차트":
-            _render_charts(st, alt, pd, orders, candles, snapshots, performance)
-        else:
-            _render_methodology(st, performance)
-
-    render_dashboard()
+def _collect_dashboard_data(collector, store: DashboardStore) -> dict:
+    now = datetime.now(timezone.utc)
+    runtime = inspect_runtime(
+        state_path=AUTO_STATE_PATH,
+        log_path=AUTO_LOG_PATH,
+        now=now,
+    )
+    sync_error = None
+    try:
+        collector.sync_orders(now=now, log_path=AUTO_LOG_PATH)
+    except Exception as exc:
+        sync_error = f"{type(exc).__name__}: {exc}"
+        store.set_meta("last_error", sync_error)
+    collection = collector.collect_market_snapshot(now=now)
+    snapshot = collection["snapshot"]
+    orders = store.list_orders(newest_first=True)
+    snapshots = store.list_account_snapshots()
+    candles = store.list_candles()
+    performance = calculate_performance(
+        list(reversed(orders)),
+        current_hunt=snapshot["hunt_balance"] if snapshot else Decimal("0"),
+        average_buy_price=(
+            snapshot["average_buy_price"] if snapshot else Decimal("0")
+        ),
+        best_bid=snapshot["best_bid"] if snapshot else Decimal("0"),
+        account_values=[
+            (item["collected_at"], item["account_value"])
+            for item in snapshots
+        ],
+    )
+    return {
+        "runtime": runtime,
+        "collection": collection,
+        "orders": orders,
+        "snapshots": snapshots,
+        "candles": candles,
+        "performance": performance,
+        "sync_error": sync_error,
+        "sync_warning": store.get_meta("last_order_sync_warning"),
+    }
 
 
 def _render_freshness(st, runtime: dict, collection: dict, store: DashboardStore) -> None:
-    status = {
-        "normal": ("정상", "status-ok"),
-        "warning": ("경고", "status-warning"),
-        "danger": ("위험", "status-danger"),
-    }[runtime["health"]]
     snapshot = collection["snapshot"]
     collected_at = snapshot["collected_at"] if snapshot else None
     freshness = _format_kst(collected_at) if collected_at else "수집 데이터 없음"
     stale = " · STALE" if collection["stale"] else ""
     st.markdown(
-        f'<div class="status-line"><span class="{status[1]}">{status[0]}</span>'
-        f"<strong> live 프로세스</strong> · 데이터 최신 {freshness}{stale}</div>",
+        f'<div class="status-line"><strong>데이터 최신</strong> '
+        f"{freshness}{stale}</div>",
         unsafe_allow_html=True,
     )
     error = collection["error"] or store.get_meta("last_error")
@@ -131,29 +158,20 @@ def _render_freshness(st, runtime: dict, collection: dict, store: DashboardStore
 
 def _render_current_status(st, runtime: dict, snapshot: dict | None) -> None:
     st.subheader("현재 상태")
-    top = st.columns(4)
-    top[0].metric("프로세스", "실행 중" if runtime["process_running"] else "감지 안 됨")
-    top[1].metric("마지막 감시", _format_watch(runtime["last_watch_at"]))
-    top[2].metric("Phase", runtime["phase"])
-    top[3].metric("Pending order", "있음" if runtime["pending_order"] else "없음")
-
-    emergency = (
-        "HALT"
-        if runtime["phase"] == "emergency_halt"
-        else f"감지 {runtime['emergency_confirmations']}/2"
+    values = st.columns(4)
+    values[0].metric("Phase", runtime["phase"])
+    values[1].metric(
+        "HUNT 잔고",
+        _number(snapshot, "hunt_balance", 4),
+        help="괄호 안 금액은 현재 최우선 매수호가 기준 평가액입니다.",
     )
-    values = st.columns(5)
-    values[0].metric("Emergency", emergency)
-    values[1].metric("HUNT 잔고", _number(snapshot, "hunt_balance", 4))
+    values[1].caption(
+        f"평가액 {_hunt_value(snapshot)}"
+    )
     values[2].metric("KRW 잔고", _number(snapshot, "krw_balance", 0))
-    values[3].metric("평균 매수가", _number(snapshot, "average_buy_price", 2))
-    values[4].metric("최우선 매수호가", _number(snapshot, "best_bid", 2))
-
-    detail = st.columns([1, 2, 2])
-    detail[0].metric("완료 5분봉 RSI", _number(snapshot, "rsi", 2))
-    detail[1].markdown(f"**다음 행동 조건**  \n{next_action_text(runtime['phase'])}")
-    last_error = runtime["last_error"] or "없음"
-    detail[2].markdown(f"**마지막 오류**  \n{last_error}")
+    values[3].markdown(
+        f"**다음 행동 조건**  \n{next_action_text(runtime['phase'])}"
+    )
 
 
 def _render_performance(st, summary) -> None:
@@ -161,10 +179,18 @@ def _render_performance(st, summary) -> None:
     row1 = st.columns(4)
     row1[0].metric("누적 매수", _krw(summary.cumulative_buy))
     row1[1].metric("누적 매도", _krw(summary.cumulative_sell))
-    row1[2].metric("실현 손익", _krw(summary.realized_pnl))
+    row1[2].metric(
+        "실현손익 (매도 완료)",
+        _krw(summary.realized_pnl),
+        help="이미 매도해 확정된 손익입니다.",
+    )
     row1[3].metric("현재 평가 손익", _krw(summary.unrealized_pnl))
     row2 = st.columns(4)
-    row2[0].metric("총손익", _krw(summary.total_pnl))
+    row2[0].metric(
+        "총손익 (실현+보유 평가)",
+        _krw(summary.total_pnl),
+        help="실현손익과 아직 보유 중인 HUNT의 평가손익을 합한 값입니다.",
+    )
     row2[1].metric(
         "수익률",
         f"{summary.return_pct:.2f}%" if summary.return_pct is not None else "-",
@@ -185,6 +211,10 @@ def _render_performance(st, summary) -> None:
             "수집된 매수보다 매도 수량이 많아 실현손익은 부분 집계입니다. "
             f"원가 미확정 수량: {summary.unmatched_sell_quantity}"
         )
+    st.caption(
+        "실현손익은 이미 매도해서 확정된 금액이고, 총손익은 실현손익에 "
+        "현재 보유 HUNT의 평가손익을 더한 금액입니다."
+    )
 
 
 def _render_trade_history(st, pd, orders: list[dict]) -> None:
@@ -246,9 +276,14 @@ def _render_charts(st, alt, pd, orders, candles, snapshots, summary) -> None:
             if item["completed_at"]
         ]
         trades = pd.DataFrame(trade_rows)
+        price_domain = chart_domain(price["가격"].tolist(), padding_ratio=0.08)
         line = alt.Chart(price).mark_line(color="#4361a8").encode(
             x=alt.X("시각:T", title=None),
-            y=alt.Y("가격:Q", title="KRW"),
+            y=alt.Y(
+                "가격:Q",
+                title="KRW",
+                scale=alt.Scale(domain=list(price_domain), zero=False),
+            ),
         )
         chart = line
         if not trades.empty:
@@ -269,9 +304,18 @@ def _render_charts(st, alt, pd, orders, candles, snapshots, summary) -> None:
             chart += points
         st.altair_chart(chart.properties(title="HUNT 가격과 체결 지점", height=340), use_container_width=True)
 
+        rsi_values = [float(value) for value in price["RSI"].dropna().tolist()]
+        rsi_domain = chart_domain(
+            [*rsi_values, 40, 45, 60, 65],
+            padding_ratio=0.08,
+            fallback=(35, 70),
+        )
         rsi_chart = alt.Chart(price).mark_line(color="#6b5ca5").encode(
             x=alt.X("시각:T", title=None),
-            y=alt.Y("RSI:Q", scale=alt.Scale(domain=[0, 100])),
+            y=alt.Y(
+                "RSI:Q",
+                scale=alt.Scale(domain=list(rsi_domain), zero=False),
+            ),
         )
         thresholds = pd.DataFrame({"기준": [40, 45, 60, 65]})
         rules = alt.Chart(thresholds).mark_rule(strokeDash=[4, 4]).encode(
@@ -283,7 +327,23 @@ def _render_charts(st, alt, pd, orders, candles, snapshots, summary) -> None:
     curve = pd.DataFrame(summary.realized_curve, columns=["시각", "누적 실현 손익"])
     if not curve.empty:
         curve["시각"] = pd.to_datetime(curve["시각"])
-        st.line_chart(curve.set_index("시각"))
+        pnl_domain = chart_domain(
+            curve["누적 실현 손익"].astype(float).tolist(),
+            padding_ratio=0.12,
+        )
+        pnl_chart = alt.Chart(curve).mark_line(color="#2d7d67").encode(
+            x=alt.X("시각:T", title=None),
+            y=alt.Y(
+                "누적 실현 손익:Q",
+                title="KRW",
+                scale=alt.Scale(domain=list(pnl_domain), zero=False),
+            ),
+            tooltip=["시각:T", "누적 실현 손익:Q"],
+        )
+        st.altair_chart(
+            pnl_chart.properties(title="누적 실현손익", height=260),
+            use_container_width=True,
+        )
     if snapshots:
         equity = pd.DataFrame(
             {
@@ -292,7 +352,23 @@ def _render_charts(st, alt, pd, orders, candles, snapshots, summary) -> None:
             }
         )
         equity["시각"] = pd.to_datetime(equity["시각"])
-        st.line_chart(equity.set_index("시각"))
+        equity_domain = chart_domain(
+            equity["계좌 평가금액"].tolist(),
+            padding_ratio=0.08,
+        )
+        equity_chart = alt.Chart(equity).mark_line(color="#4361a8").encode(
+            x=alt.X("시각:T", title=None),
+            y=alt.Y(
+                "계좌 평가금액:Q",
+                title="KRW",
+                scale=alt.Scale(domain=list(equity_domain), zero=False),
+            ),
+            tooltip=["시각:T", "계좌 평가금액:Q"],
+        )
+        st.altair_chart(
+            equity_chart.properties(title="계좌 평가금액", height=260),
+            use_container_width=True,
+        )
     emergencies = [item for item in orders if item["is_emergency"]]
     if emergencies:
         st.error(
@@ -304,6 +380,12 @@ def _render_charts(st, alt, pd, orders, candles, snapshots, summary) -> None:
 def _render_methodology(st, summary) -> None:
     st.markdown(
         """
+        ### 손익 용어
+        - **실현손익**: 매도를 완료해 이미 확정된 손익입니다.
+        - **현재 평가손익**: 아직 보유 중인 HUNT를 현재 최우선 매수호가로
+          평가한 미확정 손익입니다.
+        - **총손익**: 실현손익과 현재 평가손익의 합입니다.
+
         ### 계산 기준
         - 주문 UUID를 고유키로 사용하며 Upbit 주문 상세 체결을 우선합니다.
         - `state=cancel`이어도 체결 수량이나 체결 내역이 있으면 거래로 집계합니다.
@@ -374,6 +456,13 @@ def _number(snapshot: dict | None, key: str, digits: int) -> str:
         return "-"
     value = snapshot[key]
     return f"{value:,.{digits}f}"
+
+
+def _hunt_value(snapshot: dict | None) -> str:
+    if not snapshot:
+        return "-"
+    value = snapshot["hunt_balance"] * snapshot["best_bid"]
+    return _krw(value)
 
 
 def _krw(value: Decimal) -> str:

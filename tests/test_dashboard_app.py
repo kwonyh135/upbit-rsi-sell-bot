@@ -1,7 +1,7 @@
 import importlib
 from pathlib import Path
 
-from huntbot.dashboard_app import next_action_text
+from huntbot.dashboard_app import chart_domain, next_action_text
 
 
 def test_dashboard_module_import_has_no_runtime_side_effects():
@@ -33,3 +33,18 @@ def test_dashboard_launcher_is_localhost_only():
     script = Path("scripts/start-dashboard.ps1").read_text(encoding="utf-8")
     assert "--server.address 127.0.0.1" in script
     assert "--server.headless true" in script
+
+
+def test_dashboard_uses_manual_refresh_and_combines_charts_with_performance():
+    source = Path("huntbot/dashboard_app.py").read_text(encoding="utf-8")
+
+    assert 'st.button("새로고침"' in source
+    assert "run_every=" not in source
+    assert '["거래 및 성과", "계산 기준"]' in source
+    assert 'elif view == "차트"' not in source
+
+
+def test_chart_domain_adds_padding_without_forcing_zero():
+    assert chart_domain([118, 120, 122]) == (117.6, 122.4)
+    assert chart_domain([100, 100]) == (99.0, 101.0)
+    assert chart_domain([], fallback=(0, 1)) == (0, 1)

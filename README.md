@@ -62,10 +62,12 @@ Open:
 http://127.0.0.1:8501
 ```
 
-The page refreshes every 15 seconds. Dashboard history is stored separately in
-`data/dashboard/huntbot-dashboard.sqlite3`. Order UUID is the primary key, so
-restarting or resynchronizing does not duplicate trades. Upbit read failures
-leave the last successful snapshot visible with a stale warning.
+The page reads fresh data when it is first opened and when the `새로고침`
+button is pressed. Other UI interactions do not call Upbit again. Dashboard
+history is stored separately in `data/dashboard/huntbot-dashboard.sqlite3`.
+Order UUID is the primary key, so restarting or resynchronizing does not
+duplicate trades. Upbit read failures leave the last successful snapshot
+visible with a stale warning.
 
 The initial order sync scans the configured history in seven-day windows and
 stores only orders whose identifier starts with `huntbot-`. A market order
