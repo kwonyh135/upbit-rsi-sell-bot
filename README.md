@@ -37,6 +37,59 @@ python -m huntbot run-auto-5m --live
 python -m huntbot unlock-emergency
 ```
 
+## Read-only Local Dashboard
+
+The dashboard runs as a process separate from the live trader. It reads Upbit
+account, closed-order, order-detail, orderbook, and candle endpoints, plus the
+local auto state and log. It never calls an order endpoint and never changes
+the auto-trading state.
+
+Install the dashboard dependencies:
+
+```powershell
+& "C:\Users\김혜령\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" -m pip install -e ".[test]"
+```
+
+Start the localhost-only dashboard:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-dashboard.ps1
+```
+
+Open:
+
+```text
+http://127.0.0.1:8501
+```
+
+The page refreshes every 15 seconds. Dashboard history is stored separately in
+`data/dashboard/huntbot-dashboard.sqlite3`. Order UUID is the primary key, so
+restarting or resynchronizing does not duplicate trades. Upbit read failures
+leave the last successful snapshot visible with a stale warning.
+
+The initial order sync scans the configured history in seven-day windows and
+stores only orders whose identifier starts with `huntbot-`. A market order
+with `state=cancel` is still counted when it has a positive executed volume or
+trade details.
+
+Performance calculation rules:
+
+- Buy cost includes paid fees.
+- Sell proceeds exclude paid fees.
+- Realized P&L uses moving-average cost from synchronized fills.
+- Current unrealized P&L uses the Upbit HUNT average buy price and current best
+  bid.
+- Results are marked partial if synchronized sells exceed known synchronized
+  inventory.
+- Deposits, withdrawals, manual orders, and holdings from before the sync
+  range can prevent complete historical cost reconstruction.
+- Maximum drawdown appears only after account-value snapshots span at least
+  one hour.
+
+Do not expose the dashboard outside localhost. `.env` is loaded only for API
+authentication; keys and Telegram values are not rendered or logged by the
+dashboard.
+
 ## 5m Split Buyback Mode
 
 The 5-minute buyback mode uses the best simulated 5-minute split thresholds:

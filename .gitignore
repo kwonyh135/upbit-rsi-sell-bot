@@ -9,4 +9,5 @@ build/
 *.egg-info/
 data/cache/
 data/state/
+data/dashboard/
 logs/

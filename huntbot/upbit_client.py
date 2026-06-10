@@ -107,6 +107,33 @@ class UpbitClient:
         response.raise_for_status()
         return response.json()
 
+    def get_closed_orders(
+        self,
+        market: str,
+        *,
+        start_time: str | None = None,
+        end_time: str | None = None,
+        limit: int = 1000,
+        order_by: str = "desc",
+    ) -> list[dict]:
+        params = {
+            "market": market,
+            "limit": limit,
+            "order_by": order_by,
+        }
+        if start_time:
+            params["start_time"] = start_time
+        if end_time:
+            params["end_time"] = end_time
+        response = self.session.get(
+            f"{self.server_url}/v1/orders/closed",
+            params=params,
+            headers=self._auth_headers(params),
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def _auth_headers(self, params: dict) -> dict[str, str]:
         if not self.access_key or not self.secret_key:
             raise RuntimeError("Upbit API keys are missing. Create .env from .env.example.")
