@@ -1,0 +1,826 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KRW-HUNT 무인 자동매매 설계 검토본</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --text: #18212b;
+      --muted: #5d6977;
+      --line: #d8dee5;
+      --blue: #1769aa;
+      --blue-soft: #eaf3fb;
+      --green: #18794e;
+      --green-soft: #e8f5ee;
+      --red: #b42318;
+      --red-soft: #fcebea;
+      --amber: #8a5a00;
+      --amber-soft: #fff4d6;
+      --code: #eef1f4;
+      --shadow: 0 10px 28px rgba(24, 33, 43, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", "Malgun Gothic", Arial, sans-serif;
+      line-height: 1.65;
+    }
+
+    a {
+      color: var(--blue);
+    }
+
+    header {
+      background: #13202b;
+      color: #ffffff;
+      border-bottom: 4px solid #2d8a62;
+    }
+
+    .header-inner {
+      width: min(1180px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 42px 0 36px;
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: #9fd2b8;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(30px, 5vw, 46px);
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .header-copy {
+      max-width: 760px;
+      margin: 16px 0 0;
+      color: #d6dee5;
+      font-size: 17px;
+    }
+
+    .status-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 24px;
+    }
+
+    .status-strip span {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      padding: 5px 10px;
+      border: 1px solid #526272;
+      border-radius: 6px;
+      color: #f4f7f9;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 230px minmax(0, 1fr);
+      gap: 28px;
+      width: min(1180px, calc(100% - 40px));
+      margin: 28px auto 64px;
+    }
+
+    nav {
+      position: sticky;
+      top: 20px;
+      align-self: start;
+      padding: 16px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    nav strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+
+    nav a {
+      display: block;
+      padding: 7px 8px;
+      border-radius: 5px;
+      color: #3f4a56;
+      font-size: 14px;
+      text-decoration: none;
+    }
+
+    nav a:hover,
+    nav a:focus-visible {
+      background: var(--blue-soft);
+      color: var(--blue);
+      outline: none;
+    }
+
+    main {
+      min-width: 0;
+    }
+
+    section {
+      margin-bottom: 20px;
+      padding: 26px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      scroll-margin-top: 20px;
+    }
+
+    h2 {
+      margin: 0 0 16px;
+      font-size: 24px;
+      line-height: 1.3;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 22px 0 10px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 10px 0;
+    }
+
+    ul,
+    ol {
+      margin: 10px 0;
+      padding-left: 23px;
+    }
+
+    li + li {
+      margin-top: 7px;
+    }
+
+    code {
+      padding: 2px 6px;
+      background: var(--code);
+      border-radius: 4px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.94em;
+    }
+
+    pre {
+      overflow-x: auto;
+      margin: 14px 0 0;
+      padding: 15px 17px;
+      background: #17212b;
+      color: #f4f7f9;
+      border-radius: 7px;
+      font-family: Consolas, "Courier New", monospace;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .summary-item {
+      min-height: 112px;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-top: 4px solid var(--blue);
+      border-radius: 7px;
+      background: #fbfcfd;
+    }
+
+    .summary-item:nth-child(2) {
+      border-top-color: var(--green);
+    }
+
+    .summary-item:nth-child(3) {
+      border-top-color: var(--amber);
+    }
+
+    .summary-item:nth-child(4) {
+      border-top-color: var(--red);
+    }
+
+    .summary-item span {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .summary-item strong {
+      display: block;
+      font-size: 18px;
+      line-height: 1.35;
+    }
+
+    .notice {
+      margin-top: 18px;
+      padding: 14px 16px;
+      border-left: 5px solid var(--amber);
+      background: var(--amber-soft);
+      color: #4d390b;
+    }
+
+    .danger {
+      border-left-color: var(--red);
+      background: var(--red-soft);
+      color: #681c17;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .step {
+      position: relative;
+      min-height: 172px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fbfcfd;
+    }
+
+    .step.sell {
+      border-top: 4px solid var(--red);
+    }
+
+    .step.buy {
+      border-top: 4px solid var(--green);
+    }
+
+    .step-number {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      margin-bottom: 11px;
+      border-radius: 50%;
+      background: #263746;
+      color: #ffffff;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .step strong {
+      display: block;
+      font-size: 18px;
+    }
+
+    .step p {
+      margin: 7px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .threshold {
+      display: inline-block;
+      margin-top: 12px;
+      padding: 4px 8px;
+      border-radius: 5px;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .sell .threshold {
+      background: var(--red-soft);
+      color: var(--red);
+    }
+
+    .buy .threshold {
+      background: var(--green-soft);
+      color: var(--green);
+    }
+
+    .two-column {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
+    }
+
+    .subsection {
+      padding: 17px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fbfcfd;
+    }
+
+    .subsection h3 {
+      margin-top: 0;
+    }
+
+    .sequence {
+      margin: 16px 0 0;
+      padding: 0;
+      list-style: none;
+      counter-reset: order-step;
+    }
+
+    .sequence li {
+      position: relative;
+      min-height: 42px;
+      padding: 5px 0 12px 46px;
+      border-left: 2px solid #b7c2cc;
+      counter-increment: order-step;
+    }
+
+    .sequence li:last-child {
+      border-left-color: transparent;
+    }
+
+    .sequence li::before {
+      position: absolute;
+      top: 0;
+      left: -17px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--blue);
+      color: #ffffff;
+      content: counter(order-step);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .checklist {
+      padding: 0;
+      list-style: none;
+    }
+
+    .checklist li {
+      position: relative;
+      padding: 10px 12px 10px 38px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .checklist li:last-child {
+      border-bottom: 0;
+    }
+
+    .checklist li::before {
+      position: absolute;
+      top: 11px;
+      left: 10px;
+      width: 17px;
+      height: 17px;
+      border: 2px solid #778491;
+      border-radius: 4px;
+      content: "";
+    }
+
+    .tag-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 0;
+      list-style: none;
+    }
+
+    .tag-list li {
+      margin: 0;
+      padding: 5px 9px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: #f6f8fa;
+      color: #475361;
+      font-size: 13px;
+    }
+
+    footer {
+      padding: 24px 20px 42px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 13px;
+    }
+
+    @media (max-width: 960px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      nav {
+        position: static;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+
+      nav strong {
+        width: 100%;
+      }
+
+      .summary-grid,
+      .flow {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 640px) {
+      .header-inner,
+      .layout {
+        width: min(100% - 24px, 1180px);
+      }
+
+      .header-inner {
+        padding: 30px 0 26px;
+      }
+
+      section {
+        padding: 20px 17px;
+      }
+
+      .summary-grid,
+      .flow,
+      .two-column {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media print {
+      body {
+        background: #ffffff;
+      }
+
+      header {
+        background: #ffffff;
+        color: #000000;
+        border-bottom: 2px solid #000000;
+      }
+
+      .header-copy,
+      .eyebrow {
+        color: #333333;
+      }
+
+      nav {
+        display: none;
+      }
+
+      .layout {
+        display: block;
+        width: 100%;
+        margin: 0;
+      }
+
+      section {
+        break-inside: avoid;
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <p class="eyebrow">설계 검토본 · 2026-06-09</p>
+      <h1>KRW-HUNT 무인 자동매매</h1>
+      <p class="header-copy">
+        업비트 5분봉 RSI 분할매매 전략을 Windows 노트북에서 상시 실행하고,
+        거래·오류·시작 및 종료 상태를 텔레그램으로 알리는 설계입니다.
+      </p>
+      <div class="status-strip" aria-label="핵심 설정">
+        <span>시장 KRW-HUNT</span>
+        <span>완료된 5분봉</span>
+        <span>RSI 14</span>
+        <span>텔레그램 알림</span>
+        <span>Windows 자동 시작</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav aria-label="문서 목차">
+      <strong>빠른 이동</strong>
+      <a href="#summary">핵심 요약</a>
+      <a href="#strategy">매매 전략</a>
+      <a href="#runtime">실행 구조</a>
+      <a href="#safety">주문 안전장치</a>
+      <a href="#emergency">급락 비상 보호</a>
+      <a href="#telegram">텔레그램 알림</a>
+      <a href="#errors">오류 대응</a>
+      <a href="#windows">Windows 운영</a>
+      <a href="#commands">명령어</a>
+      <a href="#testing">검증 계획</a>
+      <a href="#scope">제외 범위</a>
+    </nav>
+
+    <main>
+      <section id="summary">
+        <h2>핵심 요약</h2>
+        <div class="summary-grid">
+          <div class="summary-item">
+            <span>현재 상태 승계</span>
+            <strong>저장된 phase부터 이어서 실행</strong>
+          </div>
+          <div class="summary-item">
+            <span>매수 자금</span>
+            <strong>각 시점의 전체 KRW 잔고 사용</strong>
+          </div>
+          <div class="summary-item">
+            <span>주문 방식</span>
+            <strong>조건 충족 시 확인 입력 없이 자동 주문</strong>
+          </div>
+          <div class="summary-item">
+            <span>중복 방지</span>
+            <strong>완료 봉·주문 UUID·pending 상태 저장</strong>
+          </div>
+        </div>
+        <div class="notice danger">
+          <strong>중요:</strong> 이 모드는 실제 자산으로 시장가 주문을 자동 전송합니다.
+          구현 후에도 시뮬레이션과 텔레그램 알림 검증을 통과하기 전에는 자동 live 작업을 활성화하지 않습니다.
+        </div>
+      </section>
+
+      <section id="strategy">
+        <h2>4단계 매매 전략</h2>
+        <p>
+          RSI는 <strong>완료된 5분봉</strong>만 사용합니다. 진행 중인 봉에는 반응하지 않으며,
+          동일한 완료 봉은 한 번만 처리합니다.
+        </p>
+        <div class="flow" aria-label="매매 단계">
+          <article class="step sell">
+            <span class="step-number">1</span>
+            <strong>1차 매도</strong>
+            <p>현재 보유 HUNT 수량의 50%를 시장가 매도합니다.</p>
+            <span class="threshold">RSI ≥ 60</span>
+          </article>
+          <article class="step sell">
+            <span class="step-number">2</span>
+            <strong>2차 매도</strong>
+            <p>남아 있는 HUNT 수량을 전부 시장가 매도합니다.</p>
+            <span class="threshold">RSI ≥ 65</span>
+          </article>
+          <article class="step buy">
+            <span class="step-number">3</span>
+            <strong>1차 매수</strong>
+            <p>해당 시점에 사용 가능한 전체 KRW 잔고의 50%를 사용합니다.</p>
+            <span class="threshold">RSI ≤ 45</span>
+          </article>
+          <article class="step buy">
+            <span class="step-number">4</span>
+            <strong>2차 매수</strong>
+            <p>해당 시점에 남아 있는 전체 KRW 잔고를 사용합니다.</p>
+            <span class="threshold">RSI ≤ 40</span>
+          </article>
+        </div>
+        <div class="notice">
+          봇 실행 후 새로 입금된 KRW도 다음 매수 단계의 사용 가능 잔고에 포함됩니다.
+          수동 확인 문구인 <code>BUY KRW-HUNT</code>와 <code>SELL KRW-HUNT</code>는 무인 모드에서 사용하지 않습니다.
+        </div>
+      </section>
+
+      <section id="runtime">
+        <h2>실행 구조와 상태 저장</h2>
+        <div class="two-column">
+          <div class="subsection">
+            <h3>무인 실행 방식</h3>
+            <ul>
+              <li>기존 수동 live 명령은 그대로 유지합니다.</li>
+              <li>별도 명령 <code>run-auto-5m</code>으로만 무인 거래를 시작합니다.</li>
+              <li>새 완료 5분봉이 생겼을 때만 RSI와 주문 조건을 평가합니다.</li>
+              <li>현재 저장된 phase를 읽어 중단 지점부터 재개합니다.</li>
+            </ul>
+          </div>
+          <div class="subsection">
+            <h3>영구 저장 항목</h3>
+            <ul>
+              <li>현재 전략 phase</li>
+              <li>마지막으로 평가한 완료 봉 시각</li>
+              <li>미해결 주문 UUID와 예정된 다음 phase</li>
+              <li>복구 및 알림에 필요한 최근 거래 정보</li>
+            </ul>
+          </div>
+        </div>
+        <p>
+          상태 파일은 임시 파일에 먼저 쓴 뒤 원본을 교체하는 방식으로 저장하여,
+          전원 종료나 프로세스 중단 중에도 불완전한 JSON이 남지 않도록 합니다.
+        </p>
+      </section>
+
+      <section id="safety">
+        <h2>주문 안전장치</h2>
+        <h3>주문 전 확인</h3>
+        <ul>
+          <li>새로 완료된 5분봉에서 발생한 신호인지 확인</li>
+          <li>현재 phase와 주문 종류가 일치하는지 확인</li>
+          <li>주문 수량 또는 KRW 금액이 0보다 큰지 확인</li>
+          <li>업비트 최소 주문금액과 지원 주문 유형 확인</li>
+          <li>아직 해결되지 않은 pending 주문이 없는지 확인</li>
+        </ul>
+
+        <h3>주문 전송 후 처리</h3>
+        <ol class="sequence">
+          <li>업비트에서 받은 주문 UUID를 pending 상태로 즉시 저장합니다.</li>
+          <li>업비트 주문 조회 API로 최종 상태와 실제 체결 수량·금액을 확인합니다.</li>
+          <li>체결 완료가 확인된 경우에만 다음 phase로 전환합니다.</li>
+          <li>체결 여부를 판단할 수 없으면 pending 상태를 유지하고 신규 주문을 중단합니다.</li>
+        </ol>
+
+        <div class="notice danger">
+          타임아웃이나 모호한 API 응답이 발생해도 주문을 임의로 재전송하지 않습니다.
+          재시작 시 저장된 주문 UUID를 먼저 조회하여 해결한 뒤에만 다음 신호를 처리합니다.
+        </div>
+      </section>
+
+      <section id="emergency">
+        <h2>급락 비상 보호</h2>
+        <div class="notice danger">
+          비상 보호 조건은 모든 RSI 매수·매도 조건보다 먼저 평가하며, 발동 시 일반 전략 처리를 즉시 차단합니다.
+        </div>
+        <div class="two-column">
+          <div class="subsection">
+            <h3>감지 조건</h3>
+            <ul>
+              <li>10초마다 최신 1호가 매수 가격과 최근 5분 시간창의 체결 최고가를 비교</li>
+              <li>현재가가 최근 5분 최고가보다 7% 이상 하락</li>
+              <li>또는 업비트 평균매수가보다 10% 이상 하락</li>
+              <li>거래가 없는 분의 1분봉 누락은 정상 공백으로 처리하고, 오래된 봉은 5분 최고가에서 제외</li>
+              <li>같은 위험 조건이 10초 간격으로 2회 연속 확인되어야 확정</li>
+              <li>정상 가격이 한 번 확인되면 연속 횟수를 0으로 초기화</li>
+            </ul>
+          </div>
+          <div class="subsection">
+            <h3>발동 후 동작</h3>
+            <ul>
+              <li>사용 가능한 HUNT 전량 시장가 매도</li>
+              <li>주문 UUID를 pending 상태로 저장하고 체결 완료 확인</li>
+              <li>체결 완료 후 <code>emergency_halt</code> 상태로 전환</li>
+              <li>자동 매수와 일반 RSI 매매 전부 중단</li>
+              <li>로컬 수동 해제 명령으로만 <code>sell_1</code> 복귀</li>
+            </ul>
+          </div>
+        </div>
+        <p>
+          1분봉 데이터가 비어 있거나 오래됐거나 5개보다 부족하면 하락률을 추정하지 않습니다.
+          해당 감지 주기를 건너뛰고 오류를 기록·알림합니다.
+        </p>
+      </section>
+
+      <section id="telegram">
+        <h2>텔레그램 알림</h2>
+        <div class="two-column">
+          <div class="subsection">
+            <h3>환경 변수</h3>
+            <ul>
+              <li><code>TELEGRAM_BOT_TOKEN</code></li>
+              <li><code>TELEGRAM_CHAT_ID</code></li>
+            </ul>
+            <p>토큰과 chat ID는 <code>.env</code>에만 저장하고 코드나 로그에는 출력하지 않습니다.</p>
+          </div>
+          <div class="subsection">
+            <h3>알림 대상</h3>
+            <ul>
+              <li>봇 시작: 현재 phase와 잔고</li>
+              <li>정상 종료</li>
+              <li>주문 제출</li>
+              <li>주문 체결 완료</li>
+              <li>API·네트워크·상태·주문 확인 오류</li>
+              <li>오류 상태에서 정상 복구</li>
+            </ul>
+          </div>
+        </div>
+        <p>
+          거래 알림에는 액션, RSI, 봉 시각, 가격, 실제 체결 수량과 금액, 주문 UUID, 다음 phase를 포함합니다.
+          동일 오류의 반복 알림은 제한합니다.
+        </p>
+        <div class="notice">
+          텔레그램 전송 실패는 거래 상태와 분리합니다. 알림이 실패해도 완료된 거래를 되돌리거나 같은 주문을 다시 보내지 않습니다.
+        </div>
+      </section>
+
+      <section id="errors">
+        <h2>오류 대응</h2>
+        <ul>
+          <li>일시적인 시세·계좌 API 오류는 제한된 지수 백오프로 재시도합니다.</li>
+          <li>반복 실패 시 프로세스는 유지하되 신규 신호 처리를 일시 중지합니다.</li>
+          <li>주문 결과가 불명확하면 reconciliation 모드로 들어가 신규 주문을 차단합니다.</li>
+          <li>상태 파일이 없거나 잘못된 경우 거래를 중단하고 오류 알림을 전송합니다.</li>
+          <li>텔레그램 장애는 로그에 남기고 별도로 재시도하며 거래 엔진은 계속 동작합니다.</li>
+          <li>예상하지 못한 예외는 시각과 함께 로그에 기록하고 가능한 경우 오류 알림을 보냅니다.</li>
+        </ul>
+      </section>
+
+      <section id="windows">
+        <h2>Windows 상시 운영</h2>
+        <div class="two-column">
+          <div class="subsection">
+            <h3>작업 스케줄러</h3>
+            <ul>
+              <li>Windows 로그인 시 자동 실행</li>
+              <li>worktree 폴더를 작업 디렉터리로 사용</li>
+              <li>현재 확인된 번들 Python 실행기 사용</li>
+              <li>실패 시 일정 지연 후 자동 재시작</li>
+              <li>봇 프로세스 중복 실행 방지</li>
+              <li>stdout·stderr 순환 로그 저장</li>
+            </ul>
+          </div>
+          <div class="subsection">
+            <h3>노트북 전원</h3>
+            <ul>
+              <li>AC 전원 연결 중 절전 모드 해제</li>
+              <li>인터넷 연결 유지</li>
+              <li>Windows 업데이트 후 재로그인 여부 확인</li>
+              <li>노트북 종료·절전 중에는 거래 불가</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section id="commands">
+        <h2>명령어 구성</h2>
+        <p>기존 명령은 유지합니다.</p>
+        <ul>
+          <li><code>watch-buyback-5m --dry-run</code></li>
+          <li><code>watch-buyback-5m --live</code></li>
+          <li><code>sync-buyback-state</code></li>
+        </ul>
+        <p>무인 자동매매는 별도 명령으로 분리합니다.</p>
+        <pre>python -m huntbot run-auto-5m --dry-run
+python -m huntbot run-auto-5m --dry-run --once
+python -m huntbot run-auto-5m --live</pre>
+        <p>
+          모드 플래그는 필수이며, <code>--once</code>는 주문 없는 검증 주기 1회 후 종료합니다.
+          수동 live 명령을 실수로 무인 모드로 전환하지 않도록 명령 경계를 유지하고,
+          작업 스케줄러도 실제 주문을 위해 <code>--live</code>를 명시해야 합니다.
+        </p>
+      </section>
+
+      <section id="testing">
+        <h2>구현 및 활성화 전 검증</h2>
+        <h3>자동화 테스트 범위</h3>
+        <ul class="tag-list">
+          <li>완료 봉 선택</li>
+          <li>봉 중복 처리 방지</li>
+          <li>4단계 RSI 경계값</li>
+          <li>전체 KRW 잔고 사용</li>
+          <li>분할 HUNT 매도</li>
+          <li>pending 주문 복구</li>
+          <li>재시작 중복 주문 방지</li>
+          <li>체결 후 phase 전환</li>
+          <li>텔레그램 메시지</li>
+          <li>알림 실패 격리</li>
+          <li>원자적 상태 저장</li>
+          <li>작업 스케줄러 설치 스크립트</li>
+          <li>급락 2회 연속 감지</li>
+          <li>비상 전량 매도</li>
+          <li>비상 정지·수동 해제</li>
+        </ul>
+
+        <h3>실제 자동 live 활성화 전 체크리스트</h3>
+        <ol class="checklist">
+          <li>전체 자동화 테스트를 실행하고 모두 통과시킵니다.</li>
+          <li>주문을 보내지 않는 무인 시뮬레이션 모드를 실행합니다.</li>
+          <li>텔레그램 시작·가상 거래·오류·복구 메시지를 확인합니다.</li>
+          <li>업비트 실제 잔고와 저장된 phase를 대조합니다.</li>
+          <li>모든 확인 이후에만 작업 스케줄러의 무인 live 작업을 활성화합니다.</li>
+        </ol>
+      </section>
+
+      <section id="scope">
+        <h2>이번 구현에서 제외하는 범위</h2>
+        <ul>
+          <li>클라우드 서버 이전</li>
+          <li>여러 코인 동시 거래</li>
+          <li>RSI 기준의 자동 최적화</li>
+          <li>웹 대시보드</li>
+          <li>텔레그램 원격 명령을 통한 주문·취소</li>
+        </ul>
+      </section>
+    </main>
+  </div>
+
+  <footer>
+    원본 명세: 2026-06-09-unattended-auto-trading-design.md · 검토용 HTML
+  </footer>
+</body>
+</html>

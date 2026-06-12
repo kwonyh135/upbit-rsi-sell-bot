@@ -39,6 +39,19 @@ def test_public_candles_do_not_include_auth_header():
     assert headers is None
 
 
+def test_public_orderbook_requests_best_level_without_auth_header():
+    session = FakeSession()
+    client = UpbitClient(access_key="access", secret_key="s" * 32, session=session)
+
+    client.get_orderbook("KRW-HUNT", count=1)
+
+    method, url, params, headers, timeout = session.calls[0]
+    assert method == "GET"
+    assert url.endswith("/v1/orderbook")
+    assert params == {"markets": "KRW-HUNT", "count": 1}
+    assert headers is None
+
+
 def test_market_sell_uses_ask_market_volume():
     session = FakeSession()
     client = UpbitClient(access_key="access", secret_key="s" * 32, session=session)
@@ -56,4 +69,51 @@ def test_market_buy_uses_bid_price_amount():
     method, url, body, headers, timeout = session.calls[0]
     assert method == "POST"
     assert body == {"market": "KRW-HUNT", "side": "bid", "ord_type": "price", "price": "50000"}
+    assert headers["Authorization"].startswith("Bearer ")
+
+
+def test_market_orders_include_optional_identifier():
+    session = FakeSession()
+    client = UpbitClient(access_key="access", secret_key="s" * 32, session=session)
+
+    client.market_sell("KRW-HUNT", "10", identifier="huntbot-sell-1")
+    client.market_buy("KRW-HUNT", "5000", identifier="huntbot-buy-1")
+
+    assert session.calls[0][2]["identifier"] == "huntbot-sell-1"
+    assert session.calls[1][2]["identifier"] == "huntbot-buy-1"
+
+
+def test_get_order_uses_uuid_or_identifier():
+    session = FakeSession()
+    client = UpbitClient(access_key="access", secret_key="s" * 32, session=session)
+
+    client.get_order(uuid="order-1")
+    client.get_order(identifier="huntbot-buy-1")
+
+    assert session.calls[0][2] == {"uuid": "order-1"}
+    assert session.calls[1][2] == {"identifier": "huntbot-buy-1"}
+
+
+def test_get_closed_orders_uses_read_only_authenticated_endpoint():
+    session = FakeSession()
+    client = UpbitClient(access_key="access", secret_key="s" * 32, session=session)
+
+    client.get_closed_orders(
+        "KRW-HUNT",
+        start_time="2026-06-01T00:00:00Z",
+        end_time="2026-06-08T00:00:00Z",
+        limit=1000,
+        order_by="asc",
+    )
+
+    method, url, params, headers, timeout = session.calls[0]
+    assert method == "GET"
+    assert url.endswith("/v1/orders/closed")
+    assert params == {
+        "market": "KRW-HUNT",
+        "start_time": "2026-06-01T00:00:00Z",
+        "end_time": "2026-06-08T00:00:00Z",
+        "limit": 1000,
+        "order_by": "asc",
+    }
     assert headers["Authorization"].startswith("Bearer ")

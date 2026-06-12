@@ -80,3 +80,5 @@ class TradeEvent:
     cash: Decimal
     remaining_quantity: Decimal
     total_value: Decimal
+    average_price: Decimal
+    realized_profit: Decimal

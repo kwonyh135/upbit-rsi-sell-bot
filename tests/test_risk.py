@@ -1,0 +1,151 @@
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+
+from huntbot.models import Candle
+from huntbot.risk import evaluate_crash_risk
+
+
+NOW = datetime(2026, 6, 9, 3, 0, tzinfo=timezone.utc)
+
+
+def candles(highs):
+    return [
+        Candle(
+            market="KRW-HUNT",
+            unit=1,
+            timestamp=NOW - timedelta(minutes=4 - index),
+            open=Decimal("100"),
+            high=Decimal(str(high)),
+            low=Decimal("90"),
+            close=Decimal("100"),
+            volume=Decimal("1"),
+        )
+        for index, high in enumerate(highs)
+    ]
+
+
+def test_seven_percent_below_recent_high_is_risky():
+    result = evaluate_crash_risk(
+        minute_candles=candles([100, 105, 110, 108, 107]),
+        current_price=Decimal("102.3"),
+        current_price_timestamp=NOW,
+        average_buy_price=Decimal("0"),
+        previous_confirmations=0,
+        now=NOW,
+    )
+    assert result.risky is True
+    assert result.reason == "five_minute_high"
+    assert result.confirmations == 1
+    assert result.high_drop_pct == Decimal("7.00")
+
+
+def test_ten_percent_below_average_buy_price_is_risky():
+    result = evaluate_crash_risk(
+        minute_candles=candles([95, 95, 95, 95, 95]),
+        current_price=Decimal("90"),
+        current_price_timestamp=NOW,
+        average_buy_price=Decimal("100"),
+        previous_confirmations=1,
+        now=NOW,
+    )
+    assert result.risky is True
+    assert result.confirmed is True
+    assert result.reason == "average_buy_price"
+    assert result.average_loss_pct == Decimal("10.0")
+
+
+def test_healthy_observation_resets_confirmations():
+    result = evaluate_crash_risk(
+        minute_candles=candles([100, 100, 100, 100, 100]),
+        current_price=Decimal("99"),
+        current_price_timestamp=NOW,
+        average_buy_price=Decimal("100"),
+        previous_confirmations=1,
+        now=NOW,
+    )
+    assert result.risky is False
+    assert result.confirmations == 0
+    assert result.confirmed is False
+
+
+def test_invalid_or_stale_orderbook_price_returns_data_error():
+    invalid = evaluate_crash_risk(
+        minute_candles=[],
+        current_price=Decimal("0"),
+        current_price_timestamp=NOW,
+        average_buy_price=Decimal("100"),
+        previous_confirmations=1,
+        now=NOW,
+    )
+    stale = evaluate_crash_risk(
+        minute_candles=[],
+        current_price=Decimal("90"),
+        current_price_timestamp=NOW - timedelta(minutes=3),
+        average_buy_price=Decimal("100"),
+        previous_confirmations=1,
+        now=NOW,
+    )
+    assert invalid.data_error == "invalid_current_price"
+    assert stale.data_error == "stale_current_price"
+    assert invalid.confirmations == 0
+    assert stale.confirmations == 0
+
+
+def test_old_candles_are_ignored_instead_of_extending_the_window():
+    sparse = candles([100, 100, 100, 100, 100])
+    sparse = [
+        Candle(**{**candle.__dict__, "timestamp": NOW - timedelta(minutes=12 + index)})
+        for index, candle in enumerate(sparse)
+    ]
+
+    result = evaluate_crash_risk(
+        minute_candles=sparse,
+        current_price=Decimal("90"),
+        current_price_timestamp=NOW,
+        average_buy_price=Decimal("0"),
+        previous_confirmations=0,
+        now=NOW,
+    )
+
+    assert result.data_error is None
+    assert result.risky is False
+    assert result.high_drop_pct == Decimal("0")
+
+
+def test_gapped_candles_use_only_highs_inside_five_minute_window():
+    recent = candles([150, 140, 120, 115, 112])
+    recent[0] = Candle(**{**recent[0].__dict__, "timestamp": NOW - timedelta(minutes=20)})
+    recent[1] = Candle(**{**recent[1].__dict__, "timestamp": NOW - timedelta(minutes=10)})
+
+    result = evaluate_crash_risk(
+        minute_candles=recent,
+        current_price=Decimal("111.6"),
+        current_price_timestamp=NOW,
+        average_buy_price=Decimal("0"),
+        previous_confirmations=0,
+        now=NOW,
+    )
+
+    assert result.data_error is None
+    assert result.risky is True
+    assert result.high_drop_pct == Decimal("7.00")
+
+
+def test_stale_trade_candles_still_check_average_with_fresh_orderbook_price():
+    stale = [
+        Candle(**{**candle.__dict__, "timestamp": NOW - timedelta(minutes=20 - index)})
+        for index, candle in enumerate(candles([120, 120, 120, 120, 120]))
+    ]
+
+    result = evaluate_crash_risk(
+        minute_candles=stale,
+        current_price=Decimal("90"),
+        current_price_timestamp=NOW,
+        average_buy_price=Decimal("100"),
+        previous_confirmations=1,
+        now=NOW,
+    )
+
+    assert result.data_error is None
+    assert result.confirmed is True
+    assert result.reason == "average_buy_price"

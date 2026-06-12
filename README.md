@@ -1,13 +1,15 @@
 # HUNT RSI Sell Bot
 
-This bot backtests RSI 14 overheat sell thresholds for `KRW-HUNT` and can sell half of the actual Upbit HUNT balance after explicit live confirmation.
+This bot backtests and runs a 5-minute RSI split strategy for `KRW-HUNT`. It supports interactive trading and a separate unattended mode with Telegram notifications and emergency crash liquidation.
 
 ## Safety
 
 - Do not enable withdrawal permission on the Upbit API key.
+- Live auto trading needs Upbit order placement, account view, and order view permissions.
 - Do not commit `.env`.
 - Default trading mode is dry-run.
-- Live market sell requires `--live` and the exact phrase `SELL KRW-HUNT`.
+- `run-auto-5m --live` can place real market orders without interactive confirmation.
+- Do not install the Windows scheduled task until dry-run and Telegram checks pass.
 
 ## Local Setup
 
@@ -29,16 +31,78 @@ python -m huntbot watch --dry-run
 python -m huntbot watch --live
 python -m huntbot watch-buyback-5m --dry-run
 python -m huntbot watch-buyback-5m --live
+python -m huntbot run-auto-5m --dry-run --once
+python -m huntbot run-auto-5m --dry-run
+python -m huntbot run-auto-5m --live
+python -m huntbot unlock-emergency
 ```
 
-## 5m Buyback Mode
+## Read-only Local Dashboard
 
-The 5-minute buyback mode uses the best simulated 5-minute thresholds:
+The dashboard runs as a process separate from the live trader. It reads Upbit
+account, closed-order, order-detail, orderbook, and candle endpoints, plus the
+local auto state and log. It never calls an order endpoint and never changes
+the auto-trading state.
 
-- Sell signal: RSI 14 is `65` or higher.
-- Buyback signal: RSI 14 is `49` or lower.
-- Sell amount: 50% of current HUNT balance.
-- Buyback amount: limited to the estimated KRW cash recorded after the last bot sell.
+Install the dashboard dependencies:
+
+```powershell
+& "C:\Users\김혜령\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" -m pip install -e ".[test]"
+```
+
+Start the localhost-only dashboard:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-dashboard.ps1
+```
+
+Open:
+
+```text
+http://127.0.0.1:8501
+```
+
+The page reads fresh data when it is first opened and when the `새로고침`
+button is pressed. Other UI interactions do not call Upbit again. Dashboard
+history is stored separately in `data/dashboard/huntbot-dashboard.sqlite3`.
+Order UUID is the primary key, so restarting or resynchronizing does not
+duplicate trades. Upbit read failures leave the last successful snapshot
+visible with a stale warning.
+
+The initial order sync scans the configured history in seven-day windows and
+stores only orders whose identifier starts with `huntbot-`. A market order
+with `state=cancel` is still counted when it has a positive executed volume or
+trade details.
+
+Performance calculation rules:
+
+- Buy cost includes paid fees.
+- Sell proceeds exclude paid fees.
+- Realized P&L uses moving-average cost from synchronized fills.
+- Current unrealized P&L uses the Upbit HUNT average buy price and current best
+  bid.
+- Results are marked partial if synchronized sells exceed known synchronized
+  inventory.
+- Deposits, withdrawals, manual orders, and holdings from before the sync
+  range can prevent complete historical cost reconstruction.
+- Maximum drawdown appears only after account-value snapshots span at least
+  one hour.
+
+Do not expose the dashboard outside localhost. `.env` is loaded only for API
+authentication; keys and Telegram values are not rendered or logged by the
+dashboard.
+
+## 5m Split Buyback Mode
+
+The 5-minute buyback mode uses the best simulated 5-minute split thresholds:
+
+- First sell signal: RSI 14 is `60` or higher, selling 50% of current HUNT balance.
+- Second sell signal: RSI 14 is `65` or higher, selling the remaining HUNT balance.
+- First buyback signal: RSI 14 is `45` or lower, buying with 50% of the current Upbit KRW balance.
+- Second buyback signal: RSI 14 is `40` or lower, buying with the remaining fee-safe Upbit KRW balance.
+- If RSI recovers to `60` before the second buy, the bot starts the sell cycle with the HUNT already acquired.
+- If RSI falls back to `45` after the first sell but before the second sell, the bot spends 50% of available KRW on a new first buy.
+- New KRW deposits are included in the next buy step.
 
 Open `docs/trading-flow-5m.html` in a browser to view the trading flow diagram.
 
@@ -76,6 +140,75 @@ python -m huntbot watch-buyback-5m --dry-run
 ```
 
 Dry-run still needs valid Upbit API keys because it reads real balances, but it does not send orders.
+
+## Unattended Auto Mode
+
+The unattended mode checks prices every 10 seconds. Normal RSI signals use only completed 5-minute candles and each candle is processed once.
+
+Start with one read-only cycle:
+
+```powershell
+& "C:\Users\김혜령\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" -m huntbot run-auto-5m --dry-run --once
+```
+
+Then run continuous dry-run for several days:
+
+```powershell
+& "C:\Users\김혜령\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" -m huntbot run-auto-5m --dry-run
+```
+
+Live auto mode:
+
+```powershell
+& "C:\Users\김혜령\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" -m huntbot run-auto-5m --live
+```
+
+Logs are written to `logs/huntbot-auto.log`.
+
+## Emergency Crash Protection
+
+Emergency protection has priority over RSI trading:
+
+- Best bid is at least `7%` below the highest traded price in the latest five-minute time window, or
+- Current price is at least `10%` below the Upbit HUNT average buy price.
+- The best bid comes from Upbit's current orderbook, so missing 1-minute candles during no-trade periods do not stop the bot.
+- The risk must be observed twice consecutively, 10 seconds apart.
+- The first risky observation already blocks normal RSI orders.
+- A confirmed risk sells all available HUNT at market.
+- After confirmed liquidation, the bot enters `emergency_halt` and cannot buy again automatically.
+
+Local unlock requires:
+
+```text
+UNLOCK KRW-HUNT
+```
+
+## Telegram
+
+Create a Telegram bot and add these values to `.env`:
+
+```dotenv
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_CHAT_ID=...
+```
+
+The bot sends startup, shutdown, order, completion, emergency, error, and recovery messages. Telegram delivery failure does not change trading state or resend an order.
+
+## Windows Auto Start
+
+After continuous dry-run and Telegram verification:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-auto-task.ps1
+```
+
+Remove it with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\remove-auto-task.ps1
+```
+
+The installer creates `HuntBot-Auto-5m` at user logon with restart-on-failure and one-instance settings. Keep the laptop connected to AC power and disable sleep while plugged in.
 
 ## Event Visualization
 

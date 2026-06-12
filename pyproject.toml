@@ -7,6 +7,8 @@ dependencies = [
   "PyJWT>=2.8",
   "python-dotenv>=1.0",
   "requests>=2.31",
+  "psutil>=5.9",
+  "streamlit>=1.37",
 ]
 
 [project.optional-dependencies]
@@ -17,3 +19,6 @@ test = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.setuptools.packages.find]
+include = ["huntbot*"]
