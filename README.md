@@ -47,7 +47,8 @@ the auto-trading state.
 Install the dashboard dependencies:
 
 ```powershell
-& "C:\Users\김혜령\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" -m pip install -e ".[test]"
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[test]"
 ```
 
 Start the localhost-only dashboard:
@@ -148,19 +149,19 @@ The unattended mode checks prices every 10 seconds. Normal RSI signals use only 
 Start with one read-only cycle:
 
 ```powershell
-& "C:\Users\김혜령\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" -m huntbot run-auto-5m --dry-run --once
+.\.venv\Scripts\python.exe -m huntbot run-auto-5m --dry-run --once
 ```
 
 Then run continuous dry-run for several days:
 
 ```powershell
-& "C:\Users\김혜령\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" -m huntbot run-auto-5m --dry-run
+.\.venv\Scripts\python.exe -m huntbot run-auto-5m --dry-run
 ```
 
 Live auto mode:
 
 ```powershell
-& "C:\Users\김혜령\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" -m huntbot run-auto-5m --live
+.\.venv\Scripts\python.exe -m huntbot run-auto-5m --live
 ```
 
 Logs are written to `logs/huntbot-auto.log`.
@@ -219,3 +220,13 @@ python -m huntbot report-split-5m
 ```
 
 Open `docs/split-buyback-events-5m.html` to see the full backtest summary and recent 90-day buy/sell event table.
+
+## AWS EC2 Ubuntu
+
+AWS에서는 `systemd`가 봇을 한 개만 실행하고 장애 시 재시작합니다. API 키, 거래 상태, 로그는 코드 배포와 분리된 `/opt/huntbot/shared`에 유지됩니다.
+
+```bash
+sudo bash deploy/install-ubuntu.sh
+```
+
+설치 직후 라이브 거래는 자동 시작되지 않습니다. Elastic IP 설정, 기존 봇 정지, 상태파일 이전, dry-run, 서비스 시작 순서는 [AWS EC2 운영 런북](docs/aws-ec2-runbook.md)을 따르세요.

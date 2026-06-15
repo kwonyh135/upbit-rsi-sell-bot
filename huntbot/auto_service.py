@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from dataclasses import replace
 from logging.handlers import RotatingFileHandler
@@ -19,6 +20,47 @@ from huntbot.trader import BUYBACK_STATE_PATH, load_buyback_state
 
 
 LOGGER = logging.getLogger("huntbot.auto")
+
+
+class WindowsFileLockBackend:
+    def __init__(self, module=None) -> None:
+        if module is None:
+            import msvcrt
+
+            module = msvcrt
+        self.module = module
+
+    def acquire(self, handle) -> None:
+        handle.seek(0)
+        self.module.locking(handle.fileno(), self.module.LK_NBLCK, 1)
+
+    def release(self, handle) -> None:
+        handle.seek(0)
+        self.module.locking(handle.fileno(), self.module.LK_UNLCK, 1)
+
+
+class PosixFileLockBackend:
+    def __init__(self, module=None) -> None:
+        if module is None:
+            import fcntl
+
+            module = fcntl
+        self.module = module
+
+    def acquire(self, handle) -> None:
+        self.module.flock(
+            handle.fileno(),
+            self.module.LOCK_EX | self.module.LOCK_NB,
+        )
+
+    def release(self, handle) -> None:
+        self.module.flock(handle.fileno(), self.module.LOCK_UN)
+
+
+def default_file_lock_backend():
+    if os.name == "nt":
+        return WindowsFileLockBackend()
+    return PosixFileLockBackend()
 
 
 def initialize_auto_state(
@@ -67,21 +109,19 @@ def configure_logging(log_dir: Path = LOG_DIR) -> None:
 
 
 class SingleInstanceLock:
-    def __init__(self, path: Path = AUTO_LOCK_PATH) -> None:
+    def __init__(self, path: Path = AUTO_LOCK_PATH, backend=None) -> None:
         self.path = path
+        self.backend = backend or default_file_lock_backend()
         self.handle = None
 
     def __enter__(self):
-        import msvcrt
-
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.handle = self.path.open("a+b")
         if self.path.stat().st_size == 0:
             self.handle.write(b"0")
             self.handle.flush()
-        self.handle.seek(0)
         try:
-            msvcrt.locking(self.handle.fileno(), msvcrt.LK_NBLCK, 1)
+            self.backend.acquire(self.handle)
         except OSError as exc:
             self.handle.close()
             self.handle = None
@@ -91,12 +131,11 @@ class SingleInstanceLock:
     def __exit__(self, exc_type, exc, tb):
         if self.handle is None:
             return
-        import msvcrt
-
-        self.handle.seek(0)
-        msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
-        self.handle.close()
-        self.handle = None
+        try:
+            self.backend.release(self.handle)
+        finally:
+            self.handle.close()
+            self.handle = None
 
 
 def run_auto_service(
@@ -107,8 +146,9 @@ def run_auto_service(
     notifier=None,
     sleep=time.sleep,
     state_path: Path | None = None,
+    log_dir: Path = LOG_DIR,
 ) -> int:
-    configure_logging()
+    configure_logging(log_dir)
     notifier = notifier or TelegramNotifier()
     state_path = state_path or (AUTO_STATE_PATH if live else AUTO_DRY_RUN_STATE_PATH)
     state = initialize_auto_state(auto_path=state_path)

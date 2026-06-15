@@ -3,7 +3,13 @@ from pathlib import Path
 import pytest
 
 from huntbot.__main__ import build_parser
-from huntbot.auto_service import initialize_auto_state, run_auto_service, unlock_emergency
+from huntbot.auto_service import (
+    PosixFileLockBackend,
+    SingleInstanceLock,
+    initialize_auto_state,
+    run_auto_service,
+    unlock_emergency,
+)
 from huntbot.auto_state import AutoTradeState, load_auto_state, save_auto_state
 from huntbot.trader import BuybackState, save_buyback_state
 
@@ -63,7 +69,13 @@ def test_dry_run_service_uses_separate_state_path(monkeypatch, tmp_path):
             return True
 
     with pytest.raises(AttributeError):
-        run_auto_service(client=Client(), live=False, once=True, notifier=Notifier())
+        run_auto_service(
+            client=Client(),
+            live=False,
+            once=True,
+            notifier=Notifier(),
+            log_dir=tmp_path / "logs",
+        )
     assert captured["path"] == dry_path
 
 
@@ -90,5 +102,44 @@ def test_failed_cycle_resets_emergency_confirmation(monkeypatch, tmp_path):
             once=True,
             notifier=Notifier(),
             state_path=path,
+            log_dir=tmp_path / "logs",
         )
     assert load_auto_state(path).emergency_confirmations == 0
+
+
+def test_single_instance_lock_uses_injected_backend_and_releases(tmp_path):
+    events = []
+
+    class Backend:
+        def acquire(self, handle):
+            events.append(("acquire", handle.closed))
+
+        def release(self, handle):
+            events.append(("release", handle.closed))
+
+    path = tmp_path / "auto.lock"
+
+    with SingleInstanceLock(path=path, backend=Backend()):
+        assert path.read_bytes() == b"0"
+
+    assert events == [("acquire", False), ("release", False)]
+
+
+def test_posix_backend_uses_exclusive_nonblocking_flock():
+    calls = []
+
+    class Fcntl:
+        LOCK_EX = 2
+        LOCK_NB = 4
+        LOCK_UN = 8
+
+        @staticmethod
+        def flock(file_descriptor, operation):
+            calls.append((file_descriptor, operation))
+
+    backend = PosixFileLockBackend(Fcntl)
+
+    backend.acquire(type("Handle", (), {"fileno": lambda self: 17})())
+    backend.release(type("Handle", (), {"fileno": lambda self: 17})())
+
+    assert calls == [(17, Fcntl.LOCK_EX | Fcntl.LOCK_NB), (17, Fcntl.LOCK_UN)]

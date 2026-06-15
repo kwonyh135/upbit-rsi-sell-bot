@@ -1,17 +1,10 @@
 $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$runtimePython = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
-$python = Get-Command python -ErrorAction SilentlyContinue
+$pythonPath = Join-Path $projectRoot ".venv\Scripts\python.exe"
 
-if ($python) {
-    $pythonPath = $python.Source
-}
-elseif (Test-Path -LiteralPath $runtimePython) {
-    $pythonPath = $runtimePython
-}
-else {
-    throw "Python executable was not found."
+if (-not (Test-Path -LiteralPath $pythonPath)) {
+    throw "Project virtual environment was not found: $pythonPath"
 }
 
 Set-Location -LiteralPath $projectRoot

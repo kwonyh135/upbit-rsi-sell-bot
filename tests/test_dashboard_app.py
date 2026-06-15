@@ -1,7 +1,11 @@
 import importlib
 from pathlib import Path
 
-from huntbot.dashboard_app import chart_domain, next_action_text
+from huntbot.dashboard_app import (
+    chart_domain,
+    next_action_text,
+    resolve_runtime_paths,
+)
 
 
 def test_dashboard_module_import_has_no_runtime_side_effects():
@@ -33,6 +37,8 @@ def test_dashboard_launcher_is_localhost_only():
     script = Path("scripts/start-dashboard.ps1").read_text(encoding="utf-8")
     assert "--server.address 127.0.0.1" in script
     assert "--server.headless true" in script
+    assert '.venv\\Scripts\\python.exe' in script
+    assert "codex-primary-runtime" not in script
 
 
 def test_dashboard_uses_manual_refresh_and_combines_charts_with_performance():
@@ -60,3 +66,44 @@ def test_price_chart_uses_candles_and_uniform_trade_points_with_tooltips():
     assert '"매도 전 평단가:Q"' in source
     assert '"해당 매도 실현손익:Q"' in source
     assert 'curve["누적 실현손익"] = curve["누적 실현손익"].astype(float)' in source
+
+
+def test_runtime_paths_prefer_complete_downloaded_aws_runtime(tmp_path):
+    remote = tmp_path / "remote"
+    state = remote / "state" / "auto-trading.json"
+    log = remote / "logs" / "huntbot-auto.log"
+    state.parent.mkdir(parents=True)
+    log.parent.mkdir(parents=True)
+    state.write_text("{}", encoding="utf-8")
+    log.write_text("", encoding="utf-8")
+
+    paths = resolve_runtime_paths(
+        remote_root=remote,
+        local_state=tmp_path / "local-state.json",
+        local_log=tmp_path / "local.log",
+    )
+
+    assert paths.source == "aws-download"
+    assert paths.state_path == state
+    assert paths.log_path == log
+    assert paths.process_running is True
+
+
+def test_runtime_paths_fall_back_when_remote_download_is_incomplete(tmp_path):
+    remote = tmp_path / "remote"
+    state = remote / "state" / "auto-trading.json"
+    state.parent.mkdir(parents=True)
+    state.write_text("{}", encoding="utf-8")
+    local_state = tmp_path / "local-state.json"
+    local_log = tmp_path / "local.log"
+
+    paths = resolve_runtime_paths(
+        remote_root=remote,
+        local_state=local_state,
+        local_log=local_log,
+    )
+
+    assert paths.source == "local"
+    assert paths.state_path == local_state
+    assert paths.log_path == local_log
+    assert paths.process_running is None
