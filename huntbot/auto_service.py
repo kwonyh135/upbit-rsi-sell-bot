@@ -153,11 +153,13 @@ def run_auto_service(
     state_path = state_path or (AUTO_STATE_PATH if live else AUTO_DRY_RUN_STATE_PATH)
     state = initialize_auto_state(auto_path=state_path)
     last_error = None
+    service_started = False
     try:
         accounts = client.get_accounts()
         hunt = next((item.get("balance", "0") for item in accounts if item.get("currency") == "HUNT"), "0")
         krw = next((item.get("balance", "0") for item in accounts if item.get("currency") == "KRW"), "0")
         _notify(notifier, startup_message(phase=state.phase, hunt_balance=hunt, krw_balance=krw, live=live))
+        service_started = True
         while True:
             try:
                 result = run_auto_cycle(
@@ -203,8 +205,9 @@ def run_auto_service(
                     raise
                 sleep(min(AUTO_POLL_SECONDS * 3, 60))
     finally:
-        final_state = load_auto_state(state_path)
-        _notify(notifier, shutdown_message(phase=final_state.phase))
+        if live and service_started:
+            final_state = load_auto_state(state_path)
+            _notify(notifier, shutdown_message(phase=final_state.phase))
 
 
 def _notify(notifier, message: str) -> None:

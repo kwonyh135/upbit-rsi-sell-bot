@@ -76,19 +76,17 @@ def select_auto_action(
         )
     if rsi_value is None or candle_timestamp is None or candle_timestamp == state.last_completed_candle:
         return None
-    if state.phase == "sell_1" and rsi_value >= 60 and hunt_balance > 0:
-        return AutoAction("sell_1", "sell", hunt_balance / Decimal("2"), "sell_2", candle_timestamp, rsi_value, "rsi")
-    if state.phase == "sell_2" and rsi_value >= 65 and hunt_balance > 0:
+    if rsi_value >= 65 and hunt_balance > 0:
         return AutoAction("sell_2", "sell", hunt_balance, "buy_1", candle_timestamp, rsi_value, "rsi")
-    if state.phase == "sell_2" and rsi_value <= 45 and krw_balance > 0:
-        return AutoAction("buy_1", "buy", krw_balance / Decimal("2"), "buy_2", candle_timestamp, rsi_value, "rsi")
-    if state.phase == "buy_1" and rsi_value <= 45 and krw_balance > 0:
-        return AutoAction("buy_1", "buy", krw_balance / Decimal("2"), "buy_2", candle_timestamp, rsi_value, "rsi")
-    if state.phase == "buy_2" and rsi_value >= 60 and hunt_balance > 0:
+    if rsi_value >= 60 and hunt_balance > 0:
         return AutoAction("sell_1", "sell", hunt_balance / Decimal("2"), "sell_2", candle_timestamp, rsi_value, "rsi")
-    if state.phase == "buy_2" and rsi_value <= 40 and krw_balance > 0:
-        fee_safe_amount = krw_balance / (Decimal("1") + bid_fee)
-        return AutoAction("buy_2", "buy", fee_safe_amount, "sell_1", candle_timestamp, rsi_value, "rsi")
+    if state.phase == "buy_2":
+        if rsi_value <= 40 and krw_balance > 0:
+            fee_safe_amount = krw_balance / (Decimal("1") + bid_fee)
+            return AutoAction("buy_2", "buy", fee_safe_amount, "sell_1", candle_timestamp, rsi_value, "rsi")
+        return None
+    if rsi_value <= 45 and krw_balance > 0:
+        return AutoAction("buy_1", "buy", krw_balance / Decimal("2"), "buy_2", candle_timestamp, rsi_value, "rsi")
     return None
 
 
@@ -198,6 +196,12 @@ def run_auto_cycle(
         previous_confirmations=state.emergency_confirmations,
         now=now,
     )
+    state = replace(
+        state,
+        emergency_confirmations=risk.confirmations,
+        emergency_reason=risk.reason,
+    )
+    save_auto_state(state, state_path)
     if risk.data_error:
         return AutoCycleResult(
             "data_error",
@@ -210,12 +214,6 @@ def run_auto_cycle(
             risk.high_drop_pct,
             risk.average_loss_pct,
         )
-    state = replace(
-        state,
-        emergency_confirmations=risk.confirmations,
-        emergency_reason=risk.reason,
-    )
-    save_auto_state(state, state_path)
 
     if risk.risky and not risk.confirmed:
         return AutoCycleResult(

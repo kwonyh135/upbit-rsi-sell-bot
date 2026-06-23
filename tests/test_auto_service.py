@@ -79,6 +79,78 @@ def test_dry_run_service_uses_separate_state_path(monkeypatch, tmp_path):
     assert captured["path"] == dry_path
 
 
+def test_one_shot_dry_run_does_not_send_shutdown_notification(monkeypatch, tmp_path):
+    dry_path = tmp_path / "dry.json"
+    monkeypatch.setattr("huntbot.auto_service.AUTO_DRY_RUN_STATE_PATH", dry_path)
+
+    class Result:
+        status = "waiting"
+        phase = "sell_1"
+        action = None
+        current_price = 127
+        rsi_value = 55
+        risk_confirmed = False
+        risk_reason = None
+        high_drop_pct = 0
+        average_loss_pct = 0
+        order_uuid = None
+
+    monkeypatch.setattr("huntbot.auto_service.run_auto_cycle", lambda **kwargs: Result())
+
+    class Client:
+        def get_accounts(self):
+            return []
+
+    class Notifier:
+        def __init__(self):
+            self.messages = []
+
+        def send(self, message):
+            self.messages.append(message)
+            return True
+
+    notifier = Notifier()
+
+    assert run_auto_service(
+        client=Client(),
+        live=False,
+        once=True,
+        notifier=notifier,
+        log_dir=tmp_path / "logs",
+    ) == 0
+
+    assert any("[HUNT BOT START]" in message for message in notifier.messages)
+    assert not any("[HUNT BOT STOP]" in message for message in notifier.messages)
+
+
+def test_live_startup_failure_does_not_send_shutdown_without_start(monkeypatch, tmp_path):
+    class Client:
+        def get_accounts(self):
+            raise RuntimeError("auth")
+
+    class Notifier:
+        def __init__(self):
+            self.messages = []
+
+        def send(self, message):
+            self.messages.append(message)
+            return True
+
+    notifier = Notifier()
+
+    with pytest.raises(RuntimeError, match="auth"):
+        run_auto_service(
+            client=Client(),
+            live=True,
+            once=False,
+            notifier=notifier,
+            state_path=tmp_path / "auto.json",
+            log_dir=tmp_path / "logs",
+        )
+
+    assert notifier.messages == []
+
+
 def test_failed_cycle_resets_emergency_confirmation(monkeypatch, tmp_path):
     path = tmp_path / "auto.json"
     save_auto_state(AutoTradeState(phase="buy_2", emergency_confirmations=1), path)

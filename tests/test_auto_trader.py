@@ -158,6 +158,74 @@ def test_sell_2_phase_rebuys_half_available_krw_when_rsi_falls_to_45():
     assert action.next_phase == "buy_2"
 
 
+def test_sell_1_phase_rebuys_half_available_krw_when_rsi_falls_to_45():
+    action = select_auto_action(
+        state=AutoTradeState(phase="sell_1"),
+        rsi_value=45,
+        candle_timestamp="c4",
+        emergency_confirmed=False,
+        emergency_reason=None,
+        hunt_balance=Decimal("600"),
+        krw_balance=Decimal("1500000"),
+        bid_fee=Decimal("0.0005"),
+    )
+
+    assert action.action == "buy_1"
+    assert action.side == "buy"
+    assert action.requested_amount == Decimal("750000")
+    assert action.next_phase == "buy_2"
+
+
+def test_buy_2_phase_does_not_repeat_buy_1_between_buy_thresholds():
+    action = select_auto_action(
+        state=AutoTradeState(phase="buy_2"),
+        rsi_value=45,
+        candle_timestamp="c4",
+        emergency_confirmed=False,
+        emergency_reason=None,
+        hunt_balance=Decimal("600"),
+        krw_balance=Decimal("750000"),
+        bid_fee=Decimal("0.0005"),
+    )
+
+    assert action is None
+
+
+def test_buy_1_phase_still_uses_first_buy_when_rsi_is_below_second_threshold():
+    action = select_auto_action(
+        state=AutoTradeState(phase="buy_1"),
+        rsi_value=40,
+        candle_timestamp="c4",
+        emergency_confirmed=False,
+        emergency_reason=None,
+        hunt_balance=Decimal("600"),
+        krw_balance=Decimal("1500000"),
+        bid_fee=Decimal("0.0005"),
+    )
+
+    assert action.action == "buy_1"
+    assert action.requested_amount == Decimal("750000")
+    assert action.next_phase == "buy_2"
+
+
+def test_any_phase_uses_second_sell_when_rsi_reaches_second_sell_threshold():
+    action = select_auto_action(
+        state=AutoTradeState(phase="buy_1"),
+        rsi_value=65,
+        candle_timestamp="c5",
+        emergency_confirmed=False,
+        emergency_reason=None,
+        hunt_balance=Decimal("600"),
+        krw_balance=Decimal("1500000"),
+        bid_fee=Decimal("0.0005"),
+    )
+
+    assert action.action == "sell_2"
+    assert action.side == "sell"
+    assert action.requested_amount == Decimal("600")
+    assert action.next_phase == "buy_1"
+
+
 def test_same_completed_candle_is_not_processed_twice():
     assert select_auto_action(
         state=AutoTradeState(phase="sell_1", last_completed_candle="c1"),
@@ -359,6 +427,39 @@ def test_first_crash_observation_blocks_normal_rsi_order(tmp_path):
     assert result.status == "emergency_pending"
     assert result.action is None
     assert load_auto_state(path).emergency_confirmations == 1
+    assert client.orders == []
+
+
+def test_risk_data_error_resets_previous_emergency_confirmation(tmp_path):
+    path = tmp_path / "auto.json"
+    save_auto_state(
+        AutoTradeState(
+            phase="buy_2",
+            emergency_confirmations=1,
+            emergency_reason="five_minute_high",
+        ),
+        path,
+    )
+    client = FakeCycleClient()
+    client.get_orderbook = lambda market, count=1: {
+        "market": market,
+        "timestamp": int((client.now - timedelta(minutes=3)).timestamp() * 1000),
+        "orderbook_units": [{"bid_price": 100, "ask_price": 101}],
+    }
+
+    result = run_auto_cycle(
+        client=client,
+        notifier=FakeNotifier(),
+        state_path=path,
+        live=True,
+        now=client.now,
+    )
+
+    saved = load_auto_state(path)
+    assert result.status == "data_error"
+    assert result.risk_reason == "stale_current_price"
+    assert saved.emergency_confirmations == 0
+    assert saved.emergency_reason is None
     assert client.orders == []
 
 
