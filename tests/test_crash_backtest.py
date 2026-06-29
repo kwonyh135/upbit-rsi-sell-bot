@@ -10,9 +10,12 @@ from huntbot.crash_backtest import (
     is_balanced_eligible,
     recovery_candidates,
     run_crash_backtest,
+    run_crash_study,
     select_strategy_action,
     split_train_validation,
 )
+from huntbot.crash_reporting import render_crash_study_markdown, study_to_json
+from huntbot.__main__ import build_parser
 from huntbot.market_data import latest_complete_candles, load_candle_snapshot, save_candle_snapshot
 from huntbot.models import Candle
 
@@ -253,3 +256,38 @@ def test_balanced_eligibility_retains_ninety_percent_of_positive_baseline():
     assert is_balanced_eligible(Decimal("9"), Decimal("10")) is True
     assert is_balanced_eligible(Decimal("8.99"), Decimal("10")) is False
     assert is_balanced_eligible(Decimal("-5"), Decimal("-4")) is False
+
+
+def test_parser_accepts_read_only_crash_backtest_command():
+    args = build_parser().parse_args(["backtest-crash-5m", "--snapshot", "candles.csv"])
+
+    assert args.command == "backtest-crash-5m"
+    assert args.snapshot == "candles.csv"
+
+
+def test_crash_study_reports_include_required_comparison_fields():
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    candles = [exact_candle(start + timedelta(days=index), "100") for index in range(183)]
+    study = run_crash_study(candles)
+    metadata = {
+        "market": "KRW-HUNT",
+        "first_candle": candles[0].timestamp.isoformat(),
+        "last_candle": candles[-1].timestamp.isoformat(),
+        "candle_count": len(candles),
+        "missing_intervals": 0,
+    }
+
+    markdown = render_crash_study_markdown(study, metadata)
+    payload = study_to_json(study, metadata)
+
+    assert "No protection baseline" in markdown
+    assert "Fixed threshold" in markdown
+    assert "ATR adaptive" in markdown
+    assert "Two-stage defense" in markdown
+    assert "Recovery" in markdown
+    assert "Return" in markdown
+    assert "MDD" in markdown
+    assert "Emergency exits" in markdown
+    assert "five-minute OHLC" in markdown
+    assert '"last_candle"' in payload
+    assert '"recommendation"' in payload

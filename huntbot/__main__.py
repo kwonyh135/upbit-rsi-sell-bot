@@ -1,14 +1,17 @@
 import argparse
 import time
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
 from huntbot.backtest import run_buyback_candidate_search, run_candidate_search, run_split_buyback_backtest, run_split_buyback_candidate_search
+from huntbot.crash_backtest import run_crash_study
+from huntbot.crash_reporting import render_crash_study_markdown, study_to_json
 from huntbot.auto_service import SingleInstanceLock, run_auto_service, unlock_emergency
 from huntbot.auto_state import AUTO_STATE_PATH
 from huntbot.config import MARKET, RSI_PERIOD, load_environment
 from huntbot.indicators import rsi
-from huntbot.market_data import fetch_recent_candles
+from huntbot.market_data import fetch_recent_candles, latest_complete_candles, load_candle_snapshot, save_candle_snapshot
 from huntbot.models import StrategyConfig
 from huntbot.reporting import render_split_buyback_report
 from huntbot.state import load_strategy, save_strategy
@@ -35,6 +38,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("backtest-buyback")
     subparsers.add_parser("backtest-split-buyback")
     subparsers.add_parser("report-split-5m")
+    crash_backtest = subparsers.add_parser("backtest-crash-5m")
+    crash_backtest.add_argument("--snapshot")
     subparsers.add_parser("sync-buyback-state")
     run_auto = subparsers.add_parser("run-auto-5m")
     auto_mode = run_auto.add_mutually_exclusive_group(required=True)
@@ -74,6 +79,8 @@ def main() -> int:
         return run_split_buyback_backtest_command()
     if args.command == "report-split-5m":
         return run_split_5m_report_command()
+    if args.command == "backtest-crash-5m":
+        return run_crash_5m_command(snapshot=args.snapshot)
     if args.command == "sync-buyback-state":
         return run_sync_buyback_state_command()
     if args.command == "run-auto-5m":
@@ -228,6 +235,47 @@ def run_sync_buyback_state_command() -> int:
         f"amount={result.sell_quantity} order_uuid={result.order_uuid}"
     )
     return 0
+
+
+def run_crash_5m_command(*, snapshot: str | None) -> int:
+    now = datetime.now(timezone.utc)
+    if snapshot:
+        candles = load_candle_snapshot(Path(snapshot))
+    else:
+        print("Downloading public KRW-HUNT five-minute candles...")
+        candles = fetch_recent_candles(UpbitClient(), MARKET, unit=5, pages=264)
+    candles = latest_complete_candles(candles, now=now, days=183)
+    if len(candles) < 15:
+        raise RuntimeError("not enough completed candles for crash backtest")
+
+    snapshot_path = Path("data/backtests/krw-hunt-5m-latest.csv")
+    result_path = Path("data/backtests/crash-study-latest.json")
+    report_path = Path("docs/crash-protection-backtest-latest.md")
+    save_candle_snapshot(candles, snapshot_path)
+    metadata = {
+        "market": MARKET,
+        "first_candle": candles[0].timestamp.isoformat(),
+        "last_candle": candles[-1].timestamp.isoformat(),
+        "candle_count": len(candles),
+        "missing_intervals": _missing_intervals(candles),
+        "downloaded_at": now.isoformat(),
+    }
+    study = run_crash_study(candles, progress=lambda message: print(f"[study] {message}"))
+    report_path.write_text(render_crash_study_markdown(study, metadata), encoding="utf-8", newline="\n")
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.write_text(study_to_json(study, metadata), encoding="utf-8", newline="\n")
+    print(f"Snapshot: {snapshot_path}")
+    print(f"Results: {result_path}")
+    print(f"Report: {report_path}")
+    return 0
+
+
+def _missing_intervals(candles) -> int:
+    missing = 0
+    for previous, current in zip(candles, candles[1:]):
+        elapsed = int((current.timestamp - previous.timestamp).total_seconds() // 300)
+        missing += max(0, elapsed - 1)
+    return missing
 
 
 def run_watch_command(*, live: bool, loop: bool) -> int:
