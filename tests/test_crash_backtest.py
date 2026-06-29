@@ -1,7 +1,18 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from huntbot.crash_backtest import run_crash_backtest, select_strategy_action
+from huntbot.crash_backtest import (
+    ProtectionConfig,
+    RecoveryConfig,
+    can_recover,
+    evaluate_protection,
+    fixed_candidates,
+    is_balanced_eligible,
+    recovery_candidates,
+    run_crash_backtest,
+    select_strategy_action,
+    split_train_validation,
+)
 from huntbot.market_data import latest_complete_candles, load_candle_snapshot, save_candle_snapshot
 from huntbot.models import Candle
 
@@ -17,6 +28,20 @@ def make_candle(timestamp: datetime, price: str = "100", *, unit: int = 5) -> Ca
         low=value - Decimal("3"),
         close=value + Decimal("1"),
         volume=Decimal("123.456"),
+    )
+
+
+def exact_candle(timestamp: datetime, close: str, *, open_price: str | None = None) -> Candle:
+    price = Decimal(close)
+    return Candle(
+        market="KRW-HUNT",
+        unit=5,
+        timestamp=timestamp,
+        open=Decimal(open_price or close),
+        high=price,
+        low=price,
+        close=price,
+        volume=Decimal("1000"),
     )
 
 
@@ -109,3 +134,122 @@ def test_backtest_costs_reduce_final_value():
     )
 
     assert with_cost.final_value < no_cost.final_value
+
+
+def test_fixed_protection_requires_consecutive_confirmations():
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    closes = ["100"] * 15 + ["94", "100", "93", "92", "91"]
+    candles = [exact_candle(start + timedelta(minutes=5 * index), close) for index, close in enumerate(closes)]
+    protection = ProtectionConfig(
+        family="fixed",
+        name="fixed-test",
+        high_window_bars=6,
+        high_drop_pct=Decimal("5"),
+        average_loss_pct=Decimal("50"),
+        confirmations=2,
+    )
+
+    result = run_crash_backtest(
+        candles,
+        protection=protection,
+        recovery=RecoveryConfig(mode="permanent", name="permanent"),
+        fee_rate=Decimal("0"),
+        normal_slippage_rate=Decimal("0"),
+        crash_slippage_rate=Decimal("0"),
+    )
+
+    emergency = [event for event in result.events if event.action == "emergency_sell"]
+    assert len(emergency) == 1
+    assert emergency[0].signal_timestamp == candles[18].timestamp
+    assert emergency[0].timestamp == candles[19].timestamp
+
+
+def test_adaptive_protection_widens_threshold_when_atr_is_high():
+    protection = ProtectionConfig(
+        family="adaptive",
+        name="adaptive-test",
+        high_drop_pct=Decimal("4"),
+        average_loss_pct=Decimal("10"),
+        atr_multiple=Decimal("3"),
+    )
+
+    low_volatility = evaluate_protection(
+        protection,
+        rolling_high=Decimal("100"),
+        current_price=Decimal("94"),
+        average_price=Decimal("100"),
+        atr_pct=Decimal("1"),
+    )
+    high_volatility = evaluate_protection(
+        protection,
+        rolling_high=Decimal("100"),
+        current_price=Decimal("94"),
+        average_price=Decimal("100"),
+        atr_pct=Decimal("3"),
+    )
+
+    assert low_volatility.final_risk is True
+    assert high_volatility.final_risk is False
+
+
+def test_staged_protection_sells_half_then_remainder():
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    closes = ["100"] * 15 + ["94", "90", "89", "88"]
+    candles = [exact_candle(start + timedelta(minutes=5 * index), close) for index, close in enumerate(closes)]
+    protection = ProtectionConfig(
+        family="staged",
+        name="staged-test",
+        high_window_bars=6,
+        warning_drop_pct=Decimal("5"),
+        warning_loss_pct=Decimal("50"),
+        final_drop_pct=Decimal("8"),
+        final_loss_pct=Decimal("50"),
+        continuation_bars=2,
+    )
+
+    result = run_crash_backtest(
+        candles,
+        protection=protection,
+        recovery=RecoveryConfig(mode="permanent", name="permanent"),
+        fee_rate=Decimal("0"),
+        normal_slippage_rate=Decimal("0"),
+        crash_slippage_rate=Decimal("0"),
+    )
+
+    emergency_actions = [event.action for event in result.events if event.action.startswith("emergency")]
+    assert emergency_actions == ["emergency_sell_1", "emergency_sell_2"]
+    assert result.final_quantity == Decimal("0")
+
+
+def test_manual_and_automatic_recovery_require_their_gates():
+    manual = RecoveryConfig(mode="manual", name="manual-6h", cooldown_bars=72)
+    automatic = RecoveryConfig(mode="automatic", name="auto-1h", cooldown_bars=12, healthy_bars=3)
+
+    assert can_recover(manual, bars_halted=71, healthy_streak=99, close=Decimal("101"), ema20=Decimal("100"), rsi_value=50.0) is False
+    assert can_recover(manual, bars_halted=72, healthy_streak=0, close=Decimal("90"), ema20=Decimal("100"), rsi_value=30.0) is True
+    assert can_recover(automatic, bars_halted=12, healthy_streak=2, close=Decimal("101"), ema20=Decimal("100"), rsi_value=50.0) is False
+    assert can_recover(automatic, bars_halted=12, healthy_streak=3, close=Decimal("99"), ema20=Decimal("100"), rsi_value=50.0) is False
+    assert can_recover(automatic, bars_halted=12, healthy_streak=3, close=Decimal("101"), ema20=Decimal("100"), rsi_value=44.9) is False
+    assert can_recover(automatic, bars_halted=12, healthy_streak=3, close=Decimal("101"), ema20=Decimal("100"), rsi_value=45.0) is True
+
+
+def test_candidate_sets_include_three_fixed_confirmations_and_all_recovery_modes():
+    assert {config.confirmations for config in fixed_candidates()} == {1, 2, 3}
+    assert {config.mode for config in recovery_candidates()} == {"manual", "automatic", "permanent"}
+
+
+def test_chronological_split_reserves_last_two_months():
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    candles = [exact_candle(start + timedelta(days=index), "100") for index in range(183)]
+
+    train, validation = split_train_validation(candles)
+
+    assert train[-1].timestamp < validation[0].timestamp
+    assert validation[0].timestamp == candles[-1].timestamp - timedelta(days=61)
+    assert validation[-1] == candles[-1]
+
+
+def test_balanced_eligibility_retains_ninety_percent_of_positive_baseline():
+    assert is_balanced_eligible(Decimal("9"), Decimal("10")) is True
+    assert is_balanced_eligible(Decimal("8.99"), Decimal("10")) is False
+    assert is_balanced_eligible(Decimal("-5"), Decimal("-4")) is False
