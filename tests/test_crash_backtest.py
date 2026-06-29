@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -11,12 +12,18 @@ from huntbot.crash_backtest import (
     recovery_candidates,
     run_crash_backtest,
     run_crash_study,
+    select_balanced_result,
     select_strategy_action,
     split_train_validation,
 )
 from huntbot.crash_reporting import render_crash_study_markdown, study_to_json
 from huntbot.__main__ import build_parser
-from huntbot.market_data import latest_complete_candles, load_candle_snapshot, save_candle_snapshot
+from huntbot.market_data import (
+    latest_complete_candles,
+    load_candle_snapshot,
+    prepare_study_candles,
+    save_candle_snapshot,
+)
 from huntbot.models import Candle
 
 
@@ -73,6 +80,20 @@ def test_latest_complete_candles_excludes_partial_future_and_old_candles():
         now - timedelta(days=182, minutes=3),
         datetime(2026, 6, 28, 23, 55, tzinfo=timezone.utc),
     ]
+
+
+def test_reused_snapshot_preserves_its_original_date_range():
+    now = datetime(2026, 6, 29, tzinfo=timezone.utc)
+    candles = [
+        make_candle(now - timedelta(days=184)),
+        make_candle(now - timedelta(days=1)),
+    ]
+
+    preserved = prepare_study_candles(candles, now=now, preserve_snapshot=True)
+    fresh = prepare_study_candles(candles, now=now, preserve_snapshot=False)
+
+    assert preserved == candles
+    assert fresh == [candles[1]]
 
 
 def test_strategy_selection_matches_production_phase_rules():
@@ -258,6 +279,37 @@ def test_balanced_eligibility_retains_ninety_percent_of_positive_baseline():
     assert is_balanced_eligible(Decimal("-5"), Decimal("-4")) is False
 
 
+def test_balanced_selection_does_not_disguise_an_ineligible_fallback():
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    candles = [exact_candle(start + timedelta(minutes=5 * index), "100") for index in range(15)]
+    template = run_crash_backtest(candles, protection=None, recovery=None)
+    baseline = replace(template, return_pct=Decimal("10"), max_drawdown_pct=Decimal("20"))
+    low_drawdown_but_far_short = replace(template, return_pct=Decimal("1"), max_drawdown_pct=Decimal("5"))
+    closest_to_threshold = replace(template, return_pct=Decimal("8.5"), max_drawdown_pct=Decimal("15"))
+
+    selected, eligible = select_balanced_result(
+        [low_drawdown_but_far_short, closest_to_threshold],
+        baseline,
+    )
+
+    assert selected is closest_to_threshold
+    assert eligible is False
+
+
+def test_balanced_selection_prefers_eligible_drawdown_reduction():
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    candles = [exact_candle(start + timedelta(minutes=5 * index), "100") for index in range(15)]
+    template = run_crash_backtest(candles, protection=None, recovery=None)
+    baseline = replace(template, return_pct=Decimal("10"), max_drawdown_pct=Decimal("20"))
+    eligible_high_mdd = replace(template, return_pct=Decimal("11"), max_drawdown_pct=Decimal("18"))
+    eligible_low_mdd = replace(template, return_pct=Decimal("9"), max_drawdown_pct=Decimal("12"))
+
+    selected, eligible = select_balanced_result([eligible_high_mdd, eligible_low_mdd], baseline)
+
+    assert selected is eligible_low_mdd
+    assert eligible is True
+
+
 def test_parser_accepts_read_only_crash_backtest_command():
     args = build_parser().parse_args(["backtest-crash-5m", "--snapshot", "candles.csv"])
 
@@ -288,6 +340,10 @@ def test_crash_study_reports_include_required_comparison_fields():
     assert "Return" in markdown
     assert "MDD" in markdown
     assert "Emergency exits" in markdown
+    assert "Eligible" in markdown
+    assert "Neighbor" in markdown
+    assert "zero emergency exits" in markdown
+    assert "modeling proxy" in markdown
     assert "five-minute OHLC" in markdown
     assert '"last_candle"' in payload
     assert '"recommendation"' in payload

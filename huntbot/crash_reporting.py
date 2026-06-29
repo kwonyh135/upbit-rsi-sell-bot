@@ -3,7 +3,7 @@ from dataclasses import asdict
 from datetime import datetime
 from decimal import Decimal
 
-from huntbot.crash_backtest import CrashBacktestResult, CrashStudyResult, StudyCandidate
+from huntbot.crash_backtest import CrashBacktestResult, CrashStudyResult, StudyCandidate, is_balanced_eligible
 
 
 FAMILY_LABELS = {
@@ -28,6 +28,7 @@ def render_crash_study_markdown(study: CrashStudyResult, metadata: dict) -> str:
         "",
         "## Recommendation",
         "",
+        f"- Meets 90% validation-return requirement: **{'yes' if study.recommendation_eligible else 'no'}**",
         f"- Protection: **{FAMILY_LABELS[recommendation.protection.family]}** (`{recommendation.protection.name}`)",
         f"- Recovery: **{recommendation.recovery.name}**",
         f"- Validation return: **{_pct(recommendation.validation.return_pct)}**",
@@ -45,18 +46,18 @@ def render_crash_study_markdown(study: CrashStudyResult, metadata: dict) -> str:
         "",
         "## Family Winners",
         "",
-        "| Family | Recovery | Validation Return | Validation MDD | Full Return | Full MDD | Emergency exits | False exits |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Family | Recovery | Eligible | Validation Return | Validation MDD | Validation exits | Full Return | Full MDD | Emergency exits | False exits |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for candidate in study.family_winners:
-        lines.append(_candidate_row(candidate))
+        lines.append(_candidate_row(candidate, study.baseline_validation))
     lines.extend(
         [
             "",
             "## Stress and Sensitivity",
             "",
-            "| Family | Crash slip 0.30% | Crash slip 1.00% | Low-touch return | Low-touch MDD |",
-            "| --- | ---: | ---: | ---: | ---: |",
+            "| Family | Crash slip 0.30% | Crash slip 1.00% | Low-touch return | Low-touch MDD | Neighbor min return | Neighbor max MDD |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
     for candidate in study.family_winners:
@@ -65,13 +66,22 @@ def render_crash_study_markdown(study: CrashStudyResult, metadata: dict) -> str:
             f"| {_pct(candidate.stress_030.return_pct)} "
             f"| {_pct(candidate.stress_100.return_pct)} "
             f"| {_pct(candidate.low_touch.return_pct)} "
-            f"| {_pct(candidate.low_touch.max_drawdown_pct)} |"
+            f"| {_pct(candidate.low_touch.max_drawdown_pct)} "
+            f"| {_pct(candidate.neighbor_min_return)} "
+            f"| {_pct(candidate.neighbor_max_mdd)} |"
         )
+    holdout_warning = []
+    if recommendation.validation.emergency_exits == 0:
+        holdout_warning = [
+            "- The recommended rule had zero emergency exits in validation; the holdout confirms low strategy drag, not crash-defense effectiveness.",
+        ]
     lines.extend(
         [
             "",
             "## Limitations",
             "",
+            *holdout_warning,
+            "- Manual recovery delays are a modeling proxy; the live bot still requires an explicit operator unlock unless separately redesigned.",
             "- Ranking uses completed five-minute OHLC closes and next-candle opens; it cannot reconstruct two observations ten seconds apart.",
             "- The low-touch run is a sensitivity bound, not proof that an intrabar condition lasted long enough to trade.",
             "- Historical results do not guarantee future performance, and live liquidity can exceed the tested slippage.",
@@ -94,12 +104,18 @@ def _baseline_row(label: str, result: CrashBacktestResult) -> str:
     return f"| {label} | {_pct(result.return_pct)} | {_pct(result.max_drawdown_pct)} | {result.emergency_exits} |"
 
 
-def _candidate_row(candidate: StudyCandidate) -> str:
+def _candidate_row(candidate: StudyCandidate, baseline: CrashBacktestResult) -> str:
+    eligible = is_balanced_eligible(
+        candidate.validation.return_pct,
+        baseline.return_pct,
+    )
     return (
         f"| {FAMILY_LABELS[candidate.protection.family]} "
         f"| {candidate.recovery.name} "
+        f"| {'yes' if eligible else 'no'} "
         f"| {_pct(candidate.validation.return_pct)} "
         f"| {_pct(candidate.validation.max_drawdown_pct)} "
+        f"| {candidate.validation.emergency_exits} "
         f"| {_pct(candidate.full.return_pct)} "
         f"| {_pct(candidate.full.max_drawdown_pct)} "
         f"| {candidate.full.emergency_exits} "

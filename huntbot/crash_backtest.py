@@ -80,6 +80,9 @@ class StudyCandidate:
     stress_030: CrashBacktestResult
     stress_100: CrashBacktestResult
     low_touch: CrashBacktestResult
+    neighbor_count: int
+    neighbor_min_return: Decimal
+    neighbor_max_mdd: Decimal
 
 
 @dataclass(frozen=True)
@@ -90,6 +93,7 @@ class CrashStudyResult:
     current_reference: CrashBacktestResult
     family_winners: tuple[StudyCandidate, ...]
     recommendation: StudyCandidate
+    recommendation_eligible: bool
 
 
 def select_strategy_action(
@@ -250,6 +254,20 @@ def is_balanced_eligible(candidate_return: Decimal, baseline_return: Decimal) ->
     return candidate_return >= baseline_return
 
 
+def select_balanced_result(
+    results: list[CrashBacktestResult],
+    baseline: CrashBacktestResult,
+) -> tuple[CrashBacktestResult, bool]:
+    if not results:
+        raise ValueError("results are required")
+    eligible = [result for result in results if is_balanced_eligible(result.return_pct, baseline.return_pct)]
+    if eligible:
+        eligible.sort(key=lambda result: (result.max_drawdown_pct, -result.return_to_drawdown, -result.return_pct))
+        return eligible[0], True
+    fallback = sorted(results, key=lambda result: (-result.return_pct, result.max_drawdown_pct, -result.return_to_drawdown))
+    return fallback[0], False
+
+
 def run_crash_study(candles: list[Candle], *, progress=None) -> CrashStudyResult:
     train_candles, validation_candles = split_train_validation(candles)
     baseline_train = run_crash_backtest(train_candles, protection=None, recovery=None)
@@ -272,7 +290,7 @@ def run_crash_study(candles: list[Candle], *, progress=None) -> CrashStudyResult
             )
             for protection in protections
         ]
-        shortlisted_protections = [item[0] for item in _rank_pairs(protection_runs, baseline_train)[:5]]
+        shortlisted_protections = _diverse_protection_shortlist(protection_runs, baseline_train)
         recovery_runs = [
             (
                 protection,
@@ -282,8 +300,7 @@ def run_crash_study(candles: list[Candle], *, progress=None) -> CrashStudyResult
             for protection in shortlisted_protections
             for recovery in recovery_candidates()
         ]
-        recovery_runs.sort(key=lambda item: _result_sort_key(item[2], baseline_train))
-        validation_shortlist = recovery_runs[:5]
+        validation_shortlist = _diverse_recovery_shortlist(recovery_runs, baseline_train)
         validated = [
             (
                 protection,
@@ -293,9 +310,18 @@ def run_crash_study(candles: list[Candle], *, progress=None) -> CrashStudyResult
             )
             for protection, recovery, train_result in validation_shortlist
         ]
-        validated.sort(key=lambda item: _result_sort_key(item[3], baseline_validation))
-        protection, recovery, train_result, validation_result = validated[0]
+        selected_validation, _ = select_balanced_result(
+            [item[3] for item in validated],
+            baseline_validation,
+        )
+        protection, recovery, train_result, validation_result = next(
+            item for item in validated if item[3] is selected_validation
+        )
         full = run_crash_backtest(candles, protection=protection, recovery=recovery)
+        neighbor_results = [
+            run_crash_backtest(candles, protection=neighbor, recovery=recovery)
+            for neighbor in _neighbor_configs(protection, protections)
+        ]
         winners.append(
             StudyCandidate(
                 protection=protection,
@@ -321,9 +347,23 @@ def run_crash_study(candles: list[Candle], *, progress=None) -> CrashStudyResult
                     recovery=recovery,
                     risk_price_mode="low",
                 ),
+                neighbor_count=len(neighbor_results),
+                neighbor_min_return=min(
+                    (result.return_pct for result in neighbor_results),
+                    default=full.return_pct,
+                ),
+                neighbor_max_mdd=max(
+                    (result.max_drawdown_pct for result in neighbor_results),
+                    default=full.max_drawdown_pct,
+                ),
             )
         )
+    selected_winner, recommendation_eligible = select_balanced_result(
+        [item.validation for item in winners],
+        baseline_validation,
+    )
     winners.sort(key=lambda item: _result_sort_key(item.validation, baseline_validation))
+    recommendation = next(item for item in winners if item.validation is selected_winner)
     current = ProtectionConfig(
         family="fixed",
         name="current-7pct-or-10pct-two-confirmations",
@@ -343,7 +383,8 @@ def run_crash_study(candles: list[Candle], *, progress=None) -> CrashStudyResult
         baseline_full=baseline_full,
         current_reference=current_reference,
         family_winners=tuple(winners),
-        recommendation=winners[0],
+        recommendation=recommendation,
+        recommendation_eligible=recommendation_eligible,
     )
 
 
@@ -355,14 +396,85 @@ def _rank_pairs(
     return pairs
 
 
+def _diverse_protection_shortlist(
+    pairs: list[tuple[ProtectionConfig, CrashBacktestResult]],
+    baseline: CrashBacktestResult,
+) -> list[ProtectionConfig]:
+    eligible = [pair for pair in pairs if is_balanced_eligible(pair[1].return_pct, baseline.return_pct)]
+    pool = eligible or pairs
+    ordered_groups = (
+        sorted(pool, key=lambda item: (item[1].max_drawdown_pct, -item[1].return_pct)),
+        sorted(pool, key=lambda item: (-item[1].return_pct, item[1].max_drawdown_pct)),
+        sorted(pool, key=lambda item: (-item[1].return_to_drawdown, item[1].max_drawdown_pct)),
+    )
+    selected: list[ProtectionConfig] = []
+    seen: set[str] = set()
+    for group in ordered_groups:
+        for protection, _ in group[:5]:
+            if protection.name not in seen:
+                selected.append(protection)
+                seen.add(protection.name)
+    return selected
+
+
+def _diverse_recovery_shortlist(
+    runs: list[tuple[ProtectionConfig, RecoveryConfig, CrashBacktestResult]],
+    baseline: CrashBacktestResult,
+) -> list[tuple[ProtectionConfig, RecoveryConfig, CrashBacktestResult]]:
+    eligible = [item for item in runs if is_balanced_eligible(item[2].return_pct, baseline.return_pct)]
+    pool = eligible or runs
+    ordered_groups = (
+        sorted(pool, key=lambda item: (item[2].max_drawdown_pct, -item[2].return_pct)),
+        sorted(pool, key=lambda item: (-item[2].return_pct, item[2].max_drawdown_pct)),
+        sorted(pool, key=lambda item: (-item[2].return_to_drawdown, item[2].max_drawdown_pct)),
+    )
+    selected = []
+    seen: set[tuple[str, str]] = set()
+    for group in ordered_groups:
+        for item in group[:5]:
+            key = (item[0].name, item[1].name)
+            if key not in seen:
+                selected.append(item)
+                seen.add(key)
+    return selected
+
+
+def _neighbor_configs(
+    selected: ProtectionConfig,
+    candidates: tuple[ProtectionConfig, ...],
+) -> list[ProtectionConfig]:
+    fields_by_family = {
+        "fixed": ("high_window_bars", "high_drop_pct", "average_loss_pct", "confirmations"),
+        "adaptive": ("high_drop_pct", "average_loss_pct", "atr_multiple", "confirmations"),
+        "staged": (
+            "warning_drop_pct",
+            "final_drop_pct",
+            "warning_loss_pct",
+            "final_loss_pct",
+            "continuation_bars",
+        ),
+    }
+    fields = fields_by_family[selected.family]
+    neighbors: list[tuple[Decimal, ProtectionConfig]] = []
+    for candidate in candidates:
+        if candidate.name == selected.name:
+            continue
+        differences = [field for field in fields if getattr(candidate, field) != getattr(selected, field)]
+        if len(differences) != 1:
+            continue
+        field = differences[0]
+        distance = abs(Decimal(str(getattr(candidate, field))) - Decimal(str(getattr(selected, field))))
+        neighbors.append((distance, candidate))
+    neighbors.sort(key=lambda item: (item[0], item[1].name))
+    return [item[1] for item in neighbors[:6]]
+
+
 def _result_sort_key(result: CrashBacktestResult, baseline: CrashBacktestResult) -> tuple:
     eligible = is_balanced_eligible(result.return_pct, baseline.return_pct)
-    return (
-        0 if eligible else 1,
-        result.max_drawdown_pct,
-        -result.return_to_drawdown,
-        -result.return_pct,
-    )
+    if eligible:
+        return (0, result.max_drawdown_pct, -result.return_to_drawdown, -result.return_pct)
+    shortfall = baseline.return_pct * Decimal("0.9") - result.return_pct if baseline.return_pct >= 0 else baseline.return_pct - result.return_pct
+    return (1, shortfall, result.max_drawdown_pct, -result.return_to_drawdown)
 
 
 def run_crash_backtest(

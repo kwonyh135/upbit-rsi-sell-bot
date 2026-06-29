@@ -108,3 +108,14 @@ def latest_complete_candles(
         ),
         key=lambda candle: candle.timestamp,
     )
+
+
+def prepare_study_candles(
+    candles: list[Candle],
+    *,
+    now: datetime,
+    preserve_snapshot: bool,
+) -> list[Candle]:
+    if preserve_snapshot:
+        return sorted(candles, key=lambda candle: candle.timestamp)
+    return latest_complete_candles(candles, now=now, days=183)

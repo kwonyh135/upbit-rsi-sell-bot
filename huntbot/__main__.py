@@ -11,7 +11,7 @@ from huntbot.auto_service import SingleInstanceLock, run_auto_service, unlock_em
 from huntbot.auto_state import AUTO_STATE_PATH
 from huntbot.config import MARKET, RSI_PERIOD, load_environment
 from huntbot.indicators import rsi
-from huntbot.market_data import fetch_recent_candles, latest_complete_candles, load_candle_snapshot, save_candle_snapshot
+from huntbot.market_data import fetch_recent_candles, load_candle_snapshot, prepare_study_candles, save_candle_snapshot
 from huntbot.models import StrategyConfig
 from huntbot.reporting import render_split_buyback_report
 from huntbot.state import load_strategy, save_strategy
@@ -244,7 +244,7 @@ def run_crash_5m_command(*, snapshot: str | None) -> int:
     else:
         print("Downloading public KRW-HUNT five-minute candles...")
         candles = fetch_recent_candles(UpbitClient(), MARKET, unit=5, pages=264)
-    candles = latest_complete_candles(candles, now=now, days=183)
+    candles = prepare_study_candles(candles, now=now, preserve_snapshot=bool(snapshot))
     if len(candles) < 15:
         raise RuntimeError("not enough completed candles for crash backtest")
 
