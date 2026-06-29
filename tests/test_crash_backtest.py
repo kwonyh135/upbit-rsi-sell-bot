@@ -378,6 +378,7 @@ def test_crash_study_reports_include_required_comparison_fields():
     assert "User-selected live rule (6% / 5% / 2 candles)" in markdown
     assert "Manual immediate-unlock proxy" in markdown
     assert "Permanent halt" in markdown
+    assert "Compared with no protection" in markdown
     assert "five-minute OHLC" in markdown
     assert '"last_candle"' in payload
     assert '"recommendation"' in payload

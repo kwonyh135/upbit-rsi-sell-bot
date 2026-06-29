@@ -170,19 +170,23 @@ Logs are written to `logs/huntbot-auto.log`.
 
 Emergency protection has priority over RSI trading:
 
-- Best bid is at least `7%` below the highest traded price in the latest five-minute time window, or
-- Current price is at least `10%` below the Upbit HUNT average buy price.
-- The best bid comes from Upbit's current orderbook, so missing 1-minute candles during no-trade periods do not stop the bot.
-- The risk must be observed twice consecutively, 10 seconds apart.
-- The first risky observation already blocks normal RSI orders.
+- A completed five-minute candle closes at least `6%` below its own high, or
+- A completed five-minute candle closes at least `5%` below the Upbit HUNT average buy price.
+- The two newest risky completed candles must be exactly five minutes apart. A missing no-trade candle breaks confirmation.
+- The first risky completed candle already blocks normal RSI orders without placing an emergency order.
 - A confirmed risk sells all available HUNT at market.
 - After confirmed liquidation, the bot enters `emergency_halt` and cannot buy again automatically.
+- Repeated 10-second polling of the same completed candle does not increase confirmations.
 
-Local unlock requires:
+Local unlock has no cooldown and requires:
 
 ```text
 UNLOCK KRW-HUNT
 ```
+
+Unlock is allowed only after the emergency order is reconciled and
+`pending_order` is null. It resets the strategy to `sell_1`; no Telegram or
+automatic unlock is available.
 
 ## Telegram
 

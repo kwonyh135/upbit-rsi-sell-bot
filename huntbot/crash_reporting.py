@@ -42,7 +42,7 @@ def render_crash_study_markdown(study: CrashStudyResult, metadata: dict) -> str:
         "| Strategy | Return | MDD | Emergency exits |",
         "| --- | ---: | ---: | ---: |",
         _baseline_row("No protection baseline", study.baseline_full),
-        _baseline_row("Current 7%/10% permanent halt reference", study.current_reference),
+        _baseline_row("Previous 7%/10% permanent halt reference", study.current_reference),
         "",
         "## User-selected live rule (6% / 5% / 2 candles)",
         "",
@@ -54,6 +54,13 @@ def render_crash_study_markdown(study: CrashStudyResult, metadata: dict) -> str:
         _live_rule_row("Permanent halt", study.live_rule_permanent),
         _live_rule_row("Manual immediate, crash slip 0.30%", study.live_rule_stress_030),
         _live_rule_row("Manual immediate, crash slip 1.00%", study.live_rule_stress_100),
+        "",
+        (
+            "Compared with no protection, the immediate-unlock proxy changes return by "
+            f"**{_signed_pp(study.live_rule_immediate.return_pct - study.baseline_full.return_pct)}** "
+            "and MDD by "
+            f"**{_signed_pp(study.live_rule_immediate.max_drawdown_pct - study.baseline_full.max_drawdown_pct)}**."
+        ),
         "",
         "## Family Winners",
         "",
@@ -109,6 +116,10 @@ def study_to_json(study: CrashStudyResult, metadata: dict) -> str:
 
 def _pct(value: Decimal) -> str:
     return f"{value.quantize(Decimal('0.01'))}%"
+
+
+def _signed_pp(value: Decimal) -> str:
+    return f"{value.quantize(Decimal('0.01')):+} pp"
 
 
 def _baseline_row(label: str, result: CrashBacktestResult) -> str:
