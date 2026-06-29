@@ -44,6 +44,17 @@ def render_crash_study_markdown(study: CrashStudyResult, metadata: dict) -> str:
         _baseline_row("No protection baseline", study.baseline_full),
         _baseline_row("Current 7%/10% permanent halt reference", study.current_reference),
         "",
+        "## User-selected live rule (6% / 5% / 2 candles)",
+        "",
+        "This rule was selected by the user after the optimization study; it is not relabeled as the prior historical optimum.",
+        "",
+        "| Scenario | Return | MDD | Emergency exits | False exits |",
+        "| --- | ---: | ---: | ---: | ---: |",
+        _live_rule_row("Manual immediate-unlock proxy", study.live_rule_immediate),
+        _live_rule_row("Permanent halt", study.live_rule_permanent),
+        _live_rule_row("Manual immediate, crash slip 0.30%", study.live_rule_stress_030),
+        _live_rule_row("Manual immediate, crash slip 1.00%", study.live_rule_stress_100),
+        "",
         "## Family Winners",
         "",
         "| Family | Recovery | Eligible | Validation Return | Validation MDD | Validation exits | Full Return | Full MDD | Emergency exits | False exits |",
@@ -102,6 +113,13 @@ def _pct(value: Decimal) -> str:
 
 def _baseline_row(label: str, result: CrashBacktestResult) -> str:
     return f"| {label} | {_pct(result.return_pct)} | {_pct(result.max_drawdown_pct)} | {result.emergency_exits} |"
+
+
+def _live_rule_row(label: str, result: CrashBacktestResult) -> str:
+    return (
+        f"| {label} | {_pct(result.return_pct)} | {_pct(result.max_drawdown_pct)} "
+        f"| {result.emergency_exits} | {result.false_exits} |"
+    )
 
 
 def _candidate_row(candidate: StudyCandidate, baseline: CrashBacktestResult) -> str:

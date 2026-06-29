@@ -94,6 +94,10 @@ class CrashStudyResult:
     family_winners: tuple[StudyCandidate, ...]
     recommendation: StudyCandidate
     recommendation_eligible: bool
+    live_rule_immediate: CrashBacktestResult
+    live_rule_permanent: CrashBacktestResult
+    live_rule_stress_030: CrashBacktestResult
+    live_rule_stress_100: CrashBacktestResult
 
 
 def select_strategy_action(
@@ -377,6 +381,25 @@ def run_crash_study(candles: list[Candle], *, progress=None) -> CrashStudyResult
         protection=current,
         recovery=RecoveryConfig("permanent", "permanent"),
     )
+    live_rule = ProtectionConfig(
+        family="fixed",
+        name="user-live-6pct-or-5pct-two-candles",
+        high_window_bars=1,
+        high_drop_pct=Decimal("6"),
+        average_loss_pct=Decimal("5"),
+        confirmations=2,
+    )
+    immediate_recovery = RecoveryConfig("manual", "manual-immediate", cooldown_bars=0)
+    live_rule_immediate = run_crash_backtest(
+        candles,
+        protection=live_rule,
+        recovery=immediate_recovery,
+    )
+    live_rule_permanent = run_crash_backtest(
+        candles,
+        protection=live_rule,
+        recovery=RecoveryConfig("permanent", "permanent"),
+    )
     return CrashStudyResult(
         baseline_train=baseline_train,
         baseline_validation=baseline_validation,
@@ -385,6 +408,20 @@ def run_crash_study(candles: list[Candle], *, progress=None) -> CrashStudyResult
         family_winners=tuple(winners),
         recommendation=recommendation,
         recommendation_eligible=recommendation_eligible,
+        live_rule_immediate=live_rule_immediate,
+        live_rule_permanent=live_rule_permanent,
+        live_rule_stress_030=run_crash_backtest(
+            candles,
+            protection=live_rule,
+            recovery=immediate_recovery,
+            crash_slippage_rate=Decimal("0.003"),
+        ),
+        live_rule_stress_100=run_crash_backtest(
+            candles,
+            protection=live_rule,
+            recovery=immediate_recovery,
+            crash_slippage_rate=Decimal("0.01"),
+        ),
     )
 
 
@@ -638,6 +675,13 @@ def run_crash_backtest(
                 pending = ("emergency_sell_1", candle.timestamp)
                 risk_blocks_normal = True
             elif protection.family in {"fixed", "adaptive"}:
+                adjacent = (
+                    index > 0
+                    and candle.timestamp - candles[index - 1].timestamp
+                    == timedelta(minutes=candle.unit)
+                )
+                if not adjacent:
+                    risk_streak = 0
                 risk_streak = risk_streak + 1 if risk.final_risk else 0
                 risk_blocks_normal = risk.final_risk
                 if risk_streak >= protection.confirmations:

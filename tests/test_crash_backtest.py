@@ -188,6 +188,37 @@ def test_fixed_protection_requires_consecutive_confirmations():
     assert emergency[0].timestamp == candles[19].timestamp
 
 
+def test_fixed_protection_timestamp_gap_resets_confirmation_streak():
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    candles = [exact_candle(start + timedelta(minutes=5 * index), "100") for index in range(15)]
+    candles.extend(
+        [
+            Candle("KRW-HUNT", 5, start + timedelta(minutes=75), Decimal("94"), Decimal("100"), Decimal("94"), Decimal("94"), Decimal("1000")),
+            Candle("KRW-HUNT", 5, start + timedelta(minutes=85), Decimal("93"), Decimal("100"), Decimal("93"), Decimal("93"), Decimal("1000")),
+            exact_candle(start + timedelta(minutes=90), "92"),
+        ]
+    )
+    protection = ProtectionConfig(
+        family="fixed",
+        name="fixed-gap-test",
+        high_window_bars=1,
+        high_drop_pct=Decimal("6"),
+        average_loss_pct=Decimal("50"),
+        confirmations=2,
+    )
+
+    result = run_crash_backtest(
+        candles,
+        protection=protection,
+        recovery=RecoveryConfig(mode="permanent", name="permanent"),
+        fee_rate=Decimal("0"),
+        normal_slippage_rate=Decimal("0"),
+        crash_slippage_rate=Decimal("0"),
+    )
+
+    assert [event.action for event in result.events if event.action.startswith("emergency")] == []
+
+
 def test_adaptive_protection_widens_threshold_when_atr_is_high():
     protection = ProtectionConfig(
         family="adaptive",
@@ -344,6 +375,9 @@ def test_crash_study_reports_include_required_comparison_fields():
     assert "Neighbor" in markdown
     assert "zero emergency exits" in markdown
     assert "modeling proxy" in markdown
+    assert "User-selected live rule (6% / 5% / 2 candles)" in markdown
+    assert "Manual immediate-unlock proxy" in markdown
+    assert "Permanent halt" in markdown
     assert "five-minute OHLC" in markdown
     assert '"last_candle"' in payload
     assert '"recommendation"' in payload
