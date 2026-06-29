@@ -323,6 +323,15 @@ class FakeCycleClient(FakeOrderClient):
     def __init__(self):
         super().__init__()
         self.now = datetime(2026, 6, 9, 3, 10, tzinfo=timezone.utc)
+        self.five_minute_rows = [
+            _raw_candle(self.now, 100, high=101),
+            _raw_candle(self.now - timedelta(minutes=5), 94, high=100),
+            _raw_candle(self.now - timedelta(minutes=10), 94, high=100),
+            *[
+                _raw_candle(self.now - timedelta(minutes=5 * index), 100)
+                for index in range(3, 20)
+            ],
+        ]
 
     def get_accounts(self):
         return [
@@ -339,14 +348,8 @@ class FakeCycleClient(FakeOrderClient):
 
     def get_minute_candles(self, market, *, unit, count=200, to=None):
         if unit == 1:
-            return [
-                _raw_candle(self.now - timedelta(minutes=index), 100, high=110 if index == 4 else 101)
-                for index in range(5)
-            ]
-        return [
-            _raw_candle(self.now - timedelta(minutes=5 * index), 100 + index)
-            for index in range(20)
-        ]
+            raise AssertionError("live crash protection must not fetch one-minute candles")
+        return self.five_minute_rows[:count]
 
     def get_order_chance(self, market):
         return {
@@ -415,6 +418,11 @@ def test_first_crash_observation_blocks_normal_rsi_order(tmp_path):
     path = tmp_path / "auto.json"
     save_auto_state(AutoTradeState(phase="buy_2"), path)
     client = FakeCycleClient()
+    client.five_minute_rows[2] = _raw_candle(
+        client.now - timedelta(minutes=10),
+        109,
+        high=110,
+    )
 
     result = run_auto_cycle(
         client=client,
@@ -427,6 +435,87 @@ def test_first_crash_observation_blocks_normal_rsi_order(tmp_path):
     assert result.status == "emergency_pending"
     assert result.action is None
     assert load_auto_state(path).emergency_confirmations == 1
+    assert client.orders == []
+
+
+def test_repeated_polling_same_risky_completed_candle_stays_at_one_confirmation(tmp_path):
+    path = tmp_path / "auto.json"
+    save_auto_state(AutoTradeState(phase="buy_2"), path)
+    client = FakeCycleClient()
+    client.five_minute_rows[2] = _raw_candle(
+        client.now - timedelta(minutes=10),
+        109,
+        high=110,
+    )
+
+    first = run_auto_cycle(
+        client=client,
+        notifier=FakeNotifier(),
+        state_path=path,
+        live=True,
+        now=client.now,
+    )
+    second = run_auto_cycle(
+        client=client,
+        notifier=FakeNotifier(),
+        state_path=path,
+        live=True,
+        now=client.now,
+    )
+
+    assert first.status == "emergency_pending"
+    assert second.status == "emergency_pending"
+    assert load_auto_state(path).emergency_confirmations == 1
+    assert client.orders == []
+
+
+def test_gap_between_risky_completed_candles_does_not_confirm(tmp_path):
+    path = tmp_path / "auto.json"
+    save_auto_state(AutoTradeState(phase="buy_2"), path)
+    client = FakeCycleClient()
+    client.five_minute_rows = [
+        _raw_candle(client.now, 100, high=101),
+        _raw_candle(client.now - timedelta(minutes=5), 94, high=100),
+        _raw_candle(client.now - timedelta(minutes=15), 94, high=100),
+        *[
+            _raw_candle(client.now - timedelta(minutes=5 * index), 100)
+            for index in range(4, 21)
+        ],
+    ]
+
+    result = run_auto_cycle(
+        client=client,
+        notifier=FakeNotifier(),
+        state_path=path,
+        live=True,
+        now=client.now,
+    )
+
+    assert result.status == "emergency_pending"
+    assert result.risk_confirmed is False
+    assert load_auto_state(path).emergency_confirmations == 1
+    assert client.orders == []
+
+
+def test_emergency_halt_returns_without_repeat_notification_or_api_calls(tmp_path):
+    path = tmp_path / "auto.json"
+    save_auto_state(AutoTradeState(phase="emergency_halt"), path)
+    client = FakeCycleClient()
+    client.get_accounts = lambda: (_ for _ in ()).throw(AssertionError("accounts must not be fetched while halted"))
+    notifier = FakeNotifier()
+
+    result = run_auto_cycle(
+        client=client,
+        notifier=notifier,
+        state_path=path,
+        live=True,
+        now=client.now,
+    )
+
+    assert result.status == "halted"
+    assert result.phase == "emergency_halt"
+    assert result.action is None
+    assert notifier.messages == []
     assert client.orders == []
 
 

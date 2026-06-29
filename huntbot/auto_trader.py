@@ -1,5 +1,5 @@
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
@@ -14,7 +14,7 @@ from huntbot.notifier import (
     order_submitted_message,
     trade_completed_message,
 )
-from huntbot.risk import evaluate_crash_risk
+from huntbot.risk import evaluate_completed_candle_crash_risk
 
 
 @dataclass(frozen=True)
@@ -155,6 +155,18 @@ def run_auto_cycle(
             average_loss_pct=None,
             order_uuid=workflow.order_uuid,
         )
+    if state.phase == "emergency_halt":
+        return AutoCycleResult(
+            status="halted",
+            phase=state.phase,
+            action=None,
+            current_price=None,
+            rsi_value=None,
+            risk_confirmed=False,
+            risk_reason=state.emergency_reason,
+            high_drop_pct=None,
+            average_loss_pct=None,
+        )
 
     accounts = client.get_accounts()
     hunt_account = _find_account(accounts, "HUNT")
@@ -187,13 +199,25 @@ def run_auto_cycle(
         int(orderbook_timestamp) / 1000,
         tz=timezone.utc,
     )
-    minute_candles = fetch_latest_candles(client, MARKET, unit=1, count=5)
-    risk = evaluate_crash_risk(
-        minute_candles=minute_candles,
-        current_price=current_price,
-        current_price_timestamp=current_price_timestamp,
+    if now - current_price_timestamp > timedelta(minutes=2):
+        state = replace(state, emergency_confirmations=0, emergency_reason=None)
+        save_auto_state(state, state_path)
+        return AutoCycleResult(
+            "data_error",
+            state.phase,
+            None,
+            current_price,
+            None,
+            False,
+            "stale_current_price",
+            None,
+            None,
+        )
+
+    five_minute_candles = fetch_latest_candles(client, MARKET, unit=5, count=200)
+    risk = evaluate_completed_candle_crash_risk(
+        five_minute_candles=five_minute_candles,
         average_buy_price=average_buy_price,
-        previous_confirmations=state.emergency_confirmations,
         now=now,
     )
     state = replace(
@@ -253,7 +277,6 @@ def run_auto_cycle(
                 risk.average_loss_pct,
             )
 
-    five_minute_candles = fetch_latest_candles(client, MARKET, unit=5, count=200)
     completed = latest_completed_candle(five_minute_candles, unit=5, now=now)
     completed_candles = [
         candle for candle in five_minute_candles
