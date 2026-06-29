@@ -171,7 +171,7 @@ Logs are written to `logs/huntbot-auto.log`.
 Emergency protection has priority over RSI trading:
 
 - A completed five-minute candle closes at least `6%` below its own high, or
-- A completed five-minute candle closes at least `5%` below the Upbit HUNT average buy price.
+- A completed five-minute candle closes at least `12%` below the Upbit HUNT average buy price.
 - The two newest risky completed candles must be exactly five minutes apart. A missing no-trade candle breaks confirmation.
 - The first risky completed candle already blocks normal RSI orders without placing an emergency order.
 - A confirmed risk sells all available HUNT at market.

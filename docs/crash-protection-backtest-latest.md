@@ -26,18 +26,18 @@
 | No protection baseline | 63.31% | 26.98% | 0 |
 | Previous 7%/10% permanent halt reference | 3.34% | 14.46% | 1 |
 
-## User-selected live rule (6% / 5% / 2 candles)
+## User-selected live rule (6% / 12% / 2 candles)
 
-This rule was selected by the user after the optimization study; it is not relabeled as the prior historical optimum.
+This uses the prior balanced threshold pair, with immediate manual unlock available as selected by the user.
 
 | Scenario | Return | MDD | Emergency exits | False exits |
 | --- | ---: | ---: | ---: | ---: |
-| Manual immediate-unlock proxy | 52.81% | 28.22% | 23 | 10 |
-| Permanent halt | 9.51% | 5.95% | 1 | 0 |
-| Manual immediate, crash slip 0.30% | 44.43% | 30.87% | 23 | 10 |
-| Manual immediate, crash slip 1.00% | 23.26% | 37.80% | 23 | 12 |
+| Manual immediate-unlock proxy | 65.81% | 26.43% | 3 | 1 |
+| Permanent halt | 2.16% | 16.33% | 1 | 1 |
+| Manual immediate, crash slip 0.30% | 64.57% | 26.61% | 3 | 1 |
+| Manual immediate, crash slip 1.00% | 61.13% | 27.55% | 3 | 2 |
 
-Compared with no protection, the immediate-unlock proxy changes return by **-10.50 pp** and MDD by **+1.24 pp**.
+Compared with no protection, the immediate-unlock proxy changes return by **+2.51 pp** and MDD by **-0.56 pp**.
 
 ## Family Winners
 

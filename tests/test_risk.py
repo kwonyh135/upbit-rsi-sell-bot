@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+from huntbot.config import EMERGENCY_AVG_LOSS_PCT
 from huntbot.models import Candle
 from huntbot.risk import evaluate_completed_candle_crash_risk, evaluate_crash_risk
 
@@ -53,8 +54,8 @@ def test_completed_candle_six_percent_high_drop_boundary_is_risky():
     assert result.reason == "five_minute_high"
 
 
-def test_completed_candle_five_percent_average_loss_boundary_is_risky():
-    candle = five_minute_candle(NOW - timedelta(minutes=5), high="95", close="95")
+def test_completed_candle_twelve_percent_average_loss_boundary_is_risky():
+    candle = five_minute_candle(NOW - timedelta(minutes=5), high="88", close="88")
 
     result = evaluate_completed_candle_crash_risk(
         five_minute_candles=[candle],
@@ -63,8 +64,22 @@ def test_completed_candle_five_percent_average_loss_boundary_is_risky():
     )
 
     assert result.risky is True
-    assert result.average_loss_pct == Decimal("5.00")
+    assert EMERGENCY_AVG_LOSS_PCT == Decimal("12")
+    assert result.average_loss_pct == Decimal("12.00")
     assert result.reason == "average_buy_price"
+
+
+def test_completed_candle_average_loss_below_twelve_percent_is_healthy():
+    candle = five_minute_candle(NOW - timedelta(minutes=5), high="88.01", close="88.01")
+
+    result = evaluate_completed_candle_crash_risk(
+        five_minute_candles=[candle],
+        average_buy_price=Decimal("100"),
+        now=NOW,
+    )
+
+    assert result.risky is False
+    assert result.confirmations == 0
 
 
 def test_completed_candle_values_below_boundaries_are_healthy():
@@ -153,10 +168,10 @@ def test_seven_percent_below_recent_high_is_risky():
     assert result.high_drop_pct == Decimal("7.00")
 
 
-def test_ten_percent_below_average_buy_price_is_risky():
+def test_twelve_percent_below_average_buy_price_is_risky():
     result = evaluate_crash_risk(
-        minute_candles=candles([95, 95, 95, 95, 95]),
-        current_price=Decimal("90"),
+        minute_candles=candles([88, 88, 88, 88, 88]),
+        current_price=Decimal("88"),
         current_price_timestamp=NOW,
         average_buy_price=Decimal("100"),
         previous_confirmations=1,
@@ -165,7 +180,7 @@ def test_ten_percent_below_average_buy_price_is_risky():
     assert result.risky is True
     assert result.confirmed is True
     assert result.reason == "average_buy_price"
-    assert result.average_loss_pct == Decimal("10.0")
+    assert result.average_loss_pct == Decimal("12.00")
 
 
 def test_healthy_observation_resets_confirmations():
@@ -193,7 +208,7 @@ def test_invalid_or_stale_orderbook_price_returns_data_error():
     )
     stale = evaluate_crash_risk(
         minute_candles=[],
-        current_price=Decimal("90"),
+        current_price=Decimal("88"),
         current_price_timestamp=NOW - timedelta(minutes=3),
         average_buy_price=Decimal("100"),
         previous_confirmations=1,
@@ -253,7 +268,7 @@ def test_stale_trade_candles_still_check_average_with_fresh_orderbook_price():
 
     result = evaluate_crash_risk(
         minute_candles=stale,
-        current_price=Decimal("90"),
+        current_price=Decimal("88"),
         current_price_timestamp=NOW,
         average_buy_price=Decimal("100"),
         previous_confirmations=1,

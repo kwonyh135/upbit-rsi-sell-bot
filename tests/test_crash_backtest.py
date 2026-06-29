@@ -375,7 +375,7 @@ def test_crash_study_reports_include_required_comparison_fields():
     assert "Neighbor" in markdown
     assert "zero emergency exits" in markdown
     assert "modeling proxy" in markdown
-    assert "User-selected live rule (6% / 5% / 2 candles)" in markdown
+    assert "User-selected live rule (6% / 12% / 2 candles)" in markdown
     assert "Manual immediate-unlock proxy" in markdown
     assert "Permanent halt" in markdown
     assert "Compared with no protection" in markdown

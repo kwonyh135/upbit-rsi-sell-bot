@@ -4,7 +4,7 @@
 
 Replace the live bot's two ten-second crash observations with two consecutive
 completed five-minute candle observations. Use a 6% same-candle high-to-close
-drop or a 5% average-buy-price-to-close loss, then liquidate all available HUNT
+drop or a 12% average-buy-price-to-close loss, then liquidate all available HUNT
 and enter the existing manual emergency halt.
 
 There is no six-hour unlock restriction. The existing local
@@ -20,7 +20,7 @@ only candles completed at `now`. For each completed candle calculate:
 - `average_loss_pct = (average_buy_price - close) / average_buy_price * 100`,
   when the account has a positive average buy price and `close` is lower.
 
-A candle is risky when `high_drop_pct >= 6` or `average_loss_pct >= 5`.
+A candle is risky when `high_drop_pct >= 6` or `average_loss_pct >= 12`.
 
 The two newest risky candles confirm an emergency only when their timestamps
 are exactly five minutes apart. A missing no-trade candle breaks the sequence.
@@ -62,7 +62,7 @@ No timer, automatic restart, or Telegram unlock command is added.
 
 Update the research simulator so fixed/adaptive confirmation streaks also reset
 when candle timestamps are not exactly one candle unit apart. Run the exact
-live candidate `high drop 6% / average loss 5% / two completed candles` on the
+live candidate `high drop 6% / average loss 12% / two completed candles` on the
 latest saved six-month snapshot.
 
 Report the no-protection baseline and exact candidate under:
@@ -72,15 +72,15 @@ Report the no-protection baseline and exact candidate under:
 - Permanent halt reference, representing no operator restart during the test.
 - 0.05%, 0.30%, and 1.00% crash-exit slippage.
 
-The 5% average-loss value was selected by the user after the broader parameter
-study and was not the earlier balanced winner. Its focused result must be
-reported without relabeling it as historically optimal.
+The 12% average-loss value matches the earlier balanced winner. Its focused
+result must still be reported separately because immediate manual unlock differs
+from the six-hour recovery proxy used by the optimized candidate.
 
 ## Tests
 
 Add deterministic tests for:
 
-- 6% high-to-close and 5% average-loss boundaries.
+- 6% high-to-close and 12% average-loss boundaries.
 - One risky completed candle blocking normal RSI orders.
 - Two adjacent risky completed candles confirming one full liquidation.
 - A timestamp gap resetting the sequence.

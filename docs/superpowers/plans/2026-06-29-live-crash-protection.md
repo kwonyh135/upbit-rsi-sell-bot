@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Change the live HUNT bot to liquidate after two consecutive risky completed five-minute candles using 6% high-to-close or 5% average-loss thresholds, with immediate existing manual unlock and no cooldown.
+**Goal:** Change the live HUNT bot to liquidate after two consecutive risky completed five-minute candles using 6% high-to-close or 12% average-loss thresholds, with immediate existing manual unlock and no cooldown.
 
 **Architecture:** Add a pure completed-candle risk evaluator in `huntbot/risk.py`, then make `run_auto_cycle` use it before normal RSI selection while reusing the same five-minute candle fetch. Preserve the existing pending-order and manual unlock workflow. Align the research simulator's confirmation streak with real timestamp adjacency and report the exact user-selected rule separately from optimized candidates.
 
@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Emergency thresholds are exactly 6% same-candle high-to-close and 5% average-buy-price-to-close.
+- Emergency thresholds are exactly 6% same-candle high-to-close and 12% average-buy-price-to-close.
 - Confirmation requires two risky completed five-minute candles exactly five minutes apart.
 - One risky candle blocks every normal RSI order but places no emergency order.
 - Confirmed risk sells all available HUNT and enters `emergency_halt` after reconciliation.
@@ -65,7 +65,7 @@
 - Adds exact live-rule results to `CrashStudyResult`: immediate-unlock proxy, permanent-halt reference, 0.30% stress, and 1.00% stress.
 
 - [ ] Add a failing simulator test where two risky records separated by ten minutes do not trigger an emergency, while five-minute-adjacent records do.
-- [ ] Add failing report assertions for a dedicated `User-selected live rule (6% / 5% / 2 candles)` section and its immediate/permanent/stress results.
+- [ ] Add failing report assertions for a dedicated `User-selected live rule (6% / 12% / 2 candles)` section and its immediate/permanent/stress results.
 - [ ] Run focused tests and verify the new expectations fail.
 - [ ] Reset simulator risk streaks on non-adjacent timestamps and evaluate `ProtectionConfig(fixed, window=1, high=6, loss=5, confirmations=2)` with manual-immediate and permanent recovery.
 - [ ] Render the exact rule separately and state that it was user-selected, not the prior optimized winner.
@@ -77,7 +77,7 @@
 - Modify: `README.md`
 - Update at runtime: `docs/crash-protection-backtest-latest.md`
 
-- [ ] Document the live 6%/5%/two-completed-candle rule and immediate manual unlock command.
+- [ ] Document the live 6%/12%/two-completed-candle rule and immediate manual unlock command.
 - [ ] Run `python -m huntbot backtest-crash-5m` to refresh public data and regenerate the exact-rule report.
 - [ ] Inspect exact-rule return, MDD, emergency exits, stress results, validation events, and candle freshness before recommending deployment.
 - [ ] Run `python -m pytest -p no:cacheprovider --basetemp=.pytest-run-live-crash-final` and confirm all tests pass.

@@ -383,10 +383,10 @@ def run_crash_study(candles: list[Candle], *, progress=None) -> CrashStudyResult
     )
     live_rule = ProtectionConfig(
         family="fixed",
-        name="user-live-6pct-or-5pct-two-candles",
+        name="user-live-6pct-or-12pct-two-candles",
         high_window_bars=1,
         high_drop_pct=Decimal("6"),
-        average_loss_pct=Decimal("5"),
+        average_loss_pct=Decimal("12"),
         confirmations=2,
     )
     immediate_recovery = RecoveryConfig("manual", "manual-immediate", cooldown_bars=0)
