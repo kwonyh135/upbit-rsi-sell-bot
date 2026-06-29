@@ -78,7 +78,7 @@ def select_auto_action(
         return None
     if rsi_value >= 65 and hunt_balance > 0:
         return AutoAction("sell_2", "sell", hunt_balance, "buy_1", candle_timestamp, rsi_value, "rsi")
-    if rsi_value >= 60 and hunt_balance > 0:
+    if rsi_value >= 60 and hunt_balance > 0 and state.phase != "sell_2":
         return AutoAction("sell_1", "sell", hunt_balance / Decimal("2"), "sell_2", candle_timestamp, rsi_value, "rsi")
     if state.phase == "buy_2":
         if rsi_value <= 40 and krw_balance > 0:
