@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from huntbot.models import Candle
-from huntbot.risk import evaluate_crash_risk
+from huntbot.risk import evaluate_completed_candle_crash_risk, evaluate_crash_risk
 
 
 NOW = datetime(2026, 6, 9, 3, 0, tzinfo=timezone.utc)
@@ -22,6 +22,120 @@ def candles(highs):
         )
         for index, high in enumerate(highs)
     ]
+
+
+def five_minute_candle(timestamp, *, high, close):
+    return Candle(
+        market="KRW-HUNT",
+        unit=5,
+        timestamp=timestamp,
+        open=Decimal(str(close)),
+        high=Decimal(str(high)),
+        low=Decimal(str(close)),
+        close=Decimal(str(close)),
+        volume=Decimal("1"),
+    )
+
+
+def test_completed_candle_six_percent_high_drop_boundary_is_risky():
+    candle = five_minute_candle(NOW - timedelta(minutes=5), high="100", close="94")
+
+    result = evaluate_completed_candle_crash_risk(
+        five_minute_candles=[candle],
+        average_buy_price=Decimal("0"),
+        now=NOW,
+    )
+
+    assert result.risky is True
+    assert result.confirmed is False
+    assert result.confirmations == 1
+    assert result.high_drop_pct == Decimal("6.00")
+    assert result.reason == "five_minute_high"
+
+
+def test_completed_candle_five_percent_average_loss_boundary_is_risky():
+    candle = five_minute_candle(NOW - timedelta(minutes=5), high="95", close="95")
+
+    result = evaluate_completed_candle_crash_risk(
+        five_minute_candles=[candle],
+        average_buy_price=Decimal("100"),
+        now=NOW,
+    )
+
+    assert result.risky is True
+    assert result.average_loss_pct == Decimal("5.00")
+    assert result.reason == "average_buy_price"
+
+
+def test_completed_candle_values_below_boundaries_are_healthy():
+    candle = five_minute_candle(NOW - timedelta(minutes=5), high="100", close="94.01")
+
+    result = evaluate_completed_candle_crash_risk(
+        five_minute_candles=[candle],
+        average_buy_price=Decimal("98.95"),
+        now=NOW,
+    )
+
+    assert result.risky is False
+    assert result.confirmations == 0
+
+
+def test_only_completed_five_minute_candles_are_considered():
+    completed = five_minute_candle(NOW - timedelta(minutes=10), high="100", close="100")
+    in_progress = five_minute_candle(NOW - timedelta(minutes=2), high="100", close="90")
+
+    result = evaluate_completed_candle_crash_risk(
+        five_minute_candles=[completed, in_progress],
+        average_buy_price=Decimal("0"),
+        now=NOW,
+    )
+
+    assert result.risky is False
+    assert result.confirmations == 0
+
+
+def test_two_adjacent_risky_completed_candles_confirm_emergency():
+    previous = five_minute_candle(NOW - timedelta(minutes=10), high="100", close="94")
+    latest = five_minute_candle(NOW - timedelta(minutes=5), high="100", close="93")
+
+    result = evaluate_completed_candle_crash_risk(
+        five_minute_candles=[previous, latest],
+        average_buy_price=Decimal("0"),
+        now=NOW,
+    )
+
+    assert result.risky is True
+    assert result.confirmed is True
+    assert result.confirmations == 2
+
+
+def test_timestamp_gap_breaks_completed_candle_confirmation():
+    previous = five_minute_candle(NOW - timedelta(minutes=15), high="100", close="94")
+    latest = five_minute_candle(NOW - timedelta(minutes=5), high="100", close="93")
+
+    result = evaluate_completed_candle_crash_risk(
+        five_minute_candles=[previous, latest],
+        average_buy_price=Decimal("0"),
+        now=NOW,
+    )
+
+    assert result.risky is True
+    assert result.confirmed is False
+    assert result.confirmations == 1
+
+
+def test_healthy_latest_completed_candle_resets_confirmation():
+    previous = five_minute_candle(NOW - timedelta(minutes=10), high="100", close="94")
+    latest = five_minute_candle(NOW - timedelta(minutes=5), high="100", close="99")
+
+    result = evaluate_completed_candle_crash_risk(
+        five_minute_candles=[previous, latest],
+        average_buy_price=Decimal("0"),
+        now=NOW,
+    )
+
+    assert result.risky is False
+    assert result.confirmations == 0
 
 
 def test_seven_percent_below_recent_high_is_risky():

@@ -16,8 +16,8 @@ LOG_DIR = Path("logs")
 AUTO_STATE_PATH = STATE_DIR / "auto-trading.json"
 AUTO_DRY_RUN_STATE_PATH = STATE_DIR / "auto-trading-dry-run.json"
 AUTO_LOCK_PATH = STATE_DIR / "auto-trading.lock"
-EMERGENCY_HIGH_DROP_PCT = Decimal("7")
-EMERGENCY_AVG_LOSS_PCT = Decimal("10")
+EMERGENCY_HIGH_DROP_PCT = Decimal("6")
+EMERGENCY_AVG_LOSS_PCT = Decimal("5")
 EMERGENCY_CONFIRMATIONS = 2
 AUTO_POLL_SECONDS = 10
 
