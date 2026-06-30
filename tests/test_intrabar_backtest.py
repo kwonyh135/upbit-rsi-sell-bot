@@ -1,9 +1,12 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+import pytest
+
 from huntbot.crash_backtest import ProtectionConfig
+import huntbot.intrabar_backtest as intrabar_backtest
 from huntbot.intrabar_backtest import TimingBacktestConfig, run_timing_backtest
-from huntbot.intrabar_signals import TimingMode
+from huntbot.intrabar_signals import TimedSignal, TimingMode
 from huntbot.second_data import SecondCandle
 
 
@@ -111,6 +114,29 @@ def protected_config(mode: TimingMode) -> TimingBacktestConfig:
     )
 
 
+def fill_action(
+    action: str,
+    state: intrabar_backtest.PortfolioState,
+    *,
+    fee_rate: str = "0",
+) -> tuple[intrabar_backtest.PortfolioState, intrabar_backtest.TimingTrade]:
+    timestamp = utc("2026-06-30T00:00:00")
+    pending = intrabar_backtest.PendingSignal(
+        TimedSignal(action, timestamp, timestamp, 50.0),
+        D("10"),
+    )
+    return intrabar_backtest._fill_signal(
+        state,
+        pending,
+        second(timestamp + timedelta(seconds=1), "10"),
+        TimingBacktestConfig(
+            mode=TimingMode.IMMEDIATE,
+            fee_rate=D(fee_rate),
+            slippage_rate=D("0"),
+        ),
+    )
+
+
 def test_signal_fills_on_next_observed_trade_with_adverse_slippage():
     seconds = threshold_fixture(signal_price="100", next_price="102")
     result = run_timing_backtest(
@@ -160,3 +186,85 @@ def test_same_completed_crash_rule_applies_to_every_timing_mode():
         any(trade.action == "emergency_sell" for trade in item.trades)
         for item in results
     )
+
+
+def test_unfinished_final_bucket_is_included_in_maximum_drawdown():
+    seconds = threshold_fixture(signal_price="100", next_price="100")
+    seconds.append(second(utc("2026-06-30T00:04:59"), "10"))
+
+    result = run_timing_backtest(seconds, config(TimingMode.IMMEDIATE))
+
+    expected = (D("3000000") - result.final_value) / D("3000000") * D("100")
+    assert result.max_drawdown_pct == expected
+
+
+def test_fill_rejects_an_unsupported_action():
+    timestamp = utc("2026-06-30T00:00:00")
+    state = intrabar_backtest.PortfolioState(D("0"), D("10"), D("100"), "sell_1")
+    pending = intrabar_backtest.PendingSignal(
+        TimedSignal("hold", timestamp, timestamp, 50.0),
+        D("100"),
+    )
+
+    with pytest.raises(ValueError, match="unsupported action: hold"):
+        intrabar_backtest._fill_signal(
+            state,
+            pending,
+            second(timestamp + timedelta(seconds=1), "100"),
+            config(TimingMode.IMMEDIATE),
+        )
+
+
+def test_buy_fee_is_reserved_inside_spend_and_sell_fee_reduces_proceeds():
+    bought_state, buy_trade = fill_action(
+        "buy_1",
+        intrabar_backtest.PortfolioState(D("1000"), D("0"), D("0"), "buy_1"),
+        fee_rate="0.1",
+    )
+    sold_state, sell_trade = fill_action(
+        "sell_1",
+        intrabar_backtest.PortfolioState(D("0"), D("10"), D("10"), "sell_1"),
+        fee_rate="0.1",
+    )
+
+    assert bought_state.cash == D("500")
+    assert buy_trade.quantity == D("500") / D("1.1") / D("10")
+    assert sold_state.cash == D("5") * D("10") * D("0.9")
+    assert sell_trade.remaining_quantity == D("5")
+
+
+@pytest.mark.parametrize(
+    ("action", "state", "expected_phase"),
+    [
+        ("buy_1", intrabar_backtest.PortfolioState(D("100"), D("0"), D("0"), "buy_1"), "buy_2"),
+        ("buy_2", intrabar_backtest.PortfolioState(D("100"), D("1"), D("10"), "buy_2"), "sell_1"),
+        ("sell_1", intrabar_backtest.PortfolioState(D("0"), D("10"), D("10"), "sell_1"), "sell_2"),
+        ("sell_2", intrabar_backtest.PortfolioState(D("0"), D("10"), D("10"), "sell_2"), "buy_1"),
+    ],
+)
+def test_normal_fill_advances_to_its_production_phase(action, state, expected_phase):
+    next_state, trade = fill_action(action, state)
+
+    assert next_state.phase == expected_phase
+    assert trade.phase == expected_phase
+
+
+def test_average_loss_requires_two_completed_confirmations_without_high_drop():
+    protection = ProtectionConfig(
+        family="fixed",
+        name="average-loss-only",
+        high_window_bars=3,
+        high_drop_pct=D("100"),
+        average_loss_pct=D("6"),
+        confirmations=2,
+    )
+
+    result = run_timing_backtest(
+        crash_fixture(),
+        TimingBacktestConfig(mode=TimingMode.IMMEDIATE, protection=protection),
+    )
+
+    emergency = [trade for trade in result.trades if trade.action == "emergency_sell"]
+    assert len(emergency) == 1
+    assert emergency[0].signal_timestamp == utc("2026-06-30T00:20:00")
+    assert emergency[0].timestamp == utc("2026-06-30T00:20:01")

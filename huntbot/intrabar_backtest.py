@@ -209,6 +209,7 @@ def run_timing_backtest(
                 pending = PendingSignal(signal, tick.close)
 
     final_value = state.cash + state.quantity * ordered[-1].close
+    equity_points.append(final_value)
     peak = equity_points[0]
     max_drawdown = Decimal("0")
     for value in equity_points:
@@ -236,6 +237,8 @@ def _fill_signal(
     config: TimingBacktestConfig,
 ) -> tuple[PortfolioState, TimingTrade]:
     action = pending.signal.action
+    if action not in {"buy_1", "buy_2", "sell_1", "sell_2", "emergency_sell"}:
+        raise ValueError(f"unsupported action: {action}")
     price = execution_price(tick.close, action, config.slippage_rate)
     cash = state.cash
     quantity = state.quantity
