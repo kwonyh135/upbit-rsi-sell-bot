@@ -125,6 +125,44 @@ def test_hold_resets_when_condition_breaks_before_thirty_seconds():
     assert tracker.active_action is None
 
 
+def test_hold_preserves_start_time_across_five_minute_rollover():
+    tracker = SignalTracker()
+
+    signal, tracker = observe_signal(
+        mode=TimingMode.HOLD_30S,
+        timestamp=utc("2026-06-30T00:04:50"),
+        candle_start=utc("2026-06-30T00:00:00"),
+        rsi_value=44.9,
+        phase="sell_1",
+        has_hunt=False,
+        has_krw=True,
+        tracker=tracker,
+    )
+
+    assert signal is None
+
+    signal, tracker = observe_signal(
+        mode=TimingMode.HOLD_30S,
+        timestamp=utc("2026-06-30T00:05:05"),
+        candle_start=utc("2026-06-30T00:05:00"),
+        rsi_value=44.8,
+        phase="sell_1",
+        has_hunt=False,
+        has_krw=True,
+        tracker=tracker,
+    )
+
+    assert signal is None
+    assert tracker.active_action == "buy_1"
+    assert tracker.active_since == utc("2026-06-30T00:04:50")
+
+    signal, tracker = mature_held_signal(tracker, utc("2026-06-30T00:05:20"))
+
+    assert signal is not None
+    assert signal.action == "buy_1"
+    assert signal.timestamp == utc("2026-06-30T00:05:20")
+
+
 def test_second_signal_from_same_candle_is_suppressed():
     signal, tracker = observe_signal(
         mode=TimingMode.IMMEDIATE,

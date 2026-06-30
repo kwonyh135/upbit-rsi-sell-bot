@@ -143,7 +143,7 @@ def observe_signal(
     if action is None:
         return None, _clear_active(tracker)
 
-    if tracker.active_action == action and tracker.active_candle == candle_start:
+    if tracker.active_action == action and tracker.active_since is not None:
         return None, tracker
 
     next_tracker = SignalTracker(
