@@ -1,7 +1,10 @@
+from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
+import huntbot.__main__ as huntbot_main
 from huntbot.__main__ import build_parser
 from huntbot.auto_service import (
     PosixFileLockBackend,
@@ -12,6 +15,7 @@ from huntbot.auto_service import (
 )
 from huntbot.auto_state import AutoTradeState, load_auto_state, save_auto_state
 from huntbot.trader import BuybackState, save_buyback_state
+from huntbot.second_data import SecondCandle, save_second_snapshot
 
 
 def test_run_auto_parser_requires_mode():
@@ -20,6 +24,44 @@ def test_run_auto_parser_requires_mode():
         parser.parse_args(["run-auto-5m"])
     assert parser.parse_args(["run-auto-5m", "--dry-run", "--once"]).once is True
     assert parser.parse_args(["run-auto-5m", "--live"]).live is True
+
+
+def test_intrabar_backtest_parser_accepts_snapshot_and_days():
+    args = build_parser().parse_args([
+        "backtest-intrabar-rsi",
+        "--snapshot", "data/backtests/test-seconds.csv",
+        "--days", "90",
+    ])
+
+    assert args.snapshot.endswith("test-seconds.csv")
+    assert args.days == 90
+
+
+def test_intrabar_snapshot_command_writes_json_and_markdown(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    snapshot = tmp_path / "seconds.csv"
+    seconds = [
+        SecondCandle(
+            "KRW-HUNT",
+            datetime(2026, 6, 30, 0, 0, second, tzinfo=timezone.utc),
+            Decimal("100"),
+            Decimal("100"),
+            Decimal("100"),
+            Decimal("100"),
+            Decimal("1"),
+        )
+        for second in (0, 2)
+    ]
+    save_second_snapshot(seconds, snapshot)
+    study = object()
+    monkeypatch.setattr(huntbot_main, "run_timing_study", lambda loaded: study if loaded == seconds else None)
+    monkeypatch.setattr(huntbot_main, "timing_study_to_json", lambda value, metadata: f"json:{metadata['missing_trade_seconds']}")
+    monkeypatch.setattr(huntbot_main, "render_timing_study_markdown", lambda value, metadata: "markdown")
+
+    assert huntbot_main.run_intrabar_rsi_command(snapshot=str(snapshot), days=90) == 0
+
+    assert (tmp_path / "data/backtests/intrabar-rsi-study-latest.json").read_text() == "json:1"
+    assert (tmp_path / "docs/intrabar-rsi-comparison-latest.md").read_text() == "markdown"
 
 
 def test_initialize_auto_state_migrates_legacy_buyback_phase(tmp_path):

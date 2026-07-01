@@ -1,6 +1,6 @@
 import argparse
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -11,9 +11,12 @@ from huntbot.auto_service import SingleInstanceLock, run_auto_service, unlock_em
 from huntbot.auto_state import AUTO_STATE_PATH
 from huntbot.config import MARKET, RSI_PERIOD, load_environment
 from huntbot.indicators import rsi
+from huntbot.intrabar_reporting import render_timing_study_markdown, timing_study_to_json
+from huntbot.intrabar_study import run_timing_study
 from huntbot.market_data import fetch_recent_candles, load_candle_snapshot, prepare_study_candles, save_candle_snapshot
 from huntbot.models import StrategyConfig
 from huntbot.reporting import render_split_buyback_report
+from huntbot.second_data import download_second_candles, load_second_snapshot
 from huntbot.state import load_strategy, save_strategy
 from huntbot.trader import (
     BUY_CONFIRMATION,
@@ -40,6 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("report-split-5m")
     crash_backtest = subparsers.add_parser("backtest-crash-5m")
     crash_backtest.add_argument("--snapshot")
+    intrabar = subparsers.add_parser("backtest-intrabar-rsi")
+    intrabar.add_argument("--snapshot")
+    intrabar.add_argument("--days", type=int, default=90)
     subparsers.add_parser("sync-buyback-state")
     run_auto = subparsers.add_parser("run-auto-5m")
     auto_mode = run_auto.add_mutually_exclusive_group(required=True)
@@ -81,6 +87,8 @@ def main() -> int:
         return run_split_5m_report_command()
     if args.command == "backtest-crash-5m":
         return run_crash_5m_command(snapshot=args.snapshot)
+    if args.command == "backtest-intrabar-rsi":
+        return run_intrabar_rsi_command(snapshot=args.snapshot, days=args.days)
     if args.command == "sync-buyback-state":
         return run_sync_buyback_state_command()
     if args.command == "run-auto-5m":
@@ -268,6 +276,53 @@ def run_crash_5m_command(*, snapshot: str | None) -> int:
     print(f"Results: {result_path}")
     print(f"Report: {report_path}")
     return 0
+
+
+def run_intrabar_rsi_command(*, snapshot: str | None, days: int) -> int:
+    now = datetime.now(timezone.utc)
+    snapshot_path = Path(snapshot or "data/backtests/krw-hunt-1s-latest.csv")
+    if snapshot:
+        seconds = load_second_snapshot(snapshot_path)
+    else:
+        seconds = download_second_candles(
+            UpbitClient(),
+            MARKET,
+            start=now - timedelta(days=days),
+            end=now,
+            snapshot_path=snapshot_path,
+        )
+    study = run_timing_study(seconds)
+    write_timing_outputs(study, seconds, now)
+    print(f"Snapshot: {snapshot_path}")
+    print("Results: data/backtests/intrabar-rsi-study-latest.json")
+    print("Report: docs/intrabar-rsi-comparison-latest.md")
+    return 0
+
+
+def write_timing_outputs(study, seconds, generated_at: datetime) -> None:
+    if not seconds:
+        raise ValueError("at least one second candle is required")
+    ordered = sorted(seconds, key=lambda item: item.timestamp)
+    elapsed_seconds = int((ordered[-1].timestamp - ordered[0].timestamp).total_seconds())
+    metadata = {
+        "market": MARKET,
+        "first_second": ordered[0].timestamp.isoformat(),
+        "last_second": ordered[-1].timestamp.isoformat(),
+        "second_count": len(ordered),
+        "coverage_days": str(Decimal(elapsed_seconds) / Decimal("86400")),
+        "missing_trade_seconds": max(0, elapsed_seconds + 1 - len(ordered)),
+        "generated_at": generated_at.isoformat(),
+    }
+    result_path = Path("data/backtests/intrabar-rsi-study-latest.json")
+    report_path = Path("docs/intrabar-rsi-comparison-latest.md")
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.write_text(
+        timing_study_to_json(study, metadata), encoding="utf-8", newline="\n"
+    )
+    report_path.write_text(
+        render_timing_study_markdown(study, metadata), encoding="utf-8", newline="\n"
+    )
 
 
 def _missing_intervals(candles) -> int:
