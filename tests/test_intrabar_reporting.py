@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from huntbot.intrabar_backtest import TimingBacktestResult, TimingTrade
+from huntbot.intrabar_backtest import TimingBacktestResult, TimingCycle, TimingTrade
 from huntbot.intrabar_reporting import render_timing_study_markdown, timing_study_to_json
 from huntbot.intrabar_signals import TimingMode
 from huntbot.intrabar_study import SLIPPAGES, TimingStudyResult, evaluate_recommendation, run_key
@@ -15,7 +15,21 @@ def trade(action: str, minute: int) -> TimingTrade:
     return TimingTrade(action, timestamp, timestamp, timestamp, D("100"), D("100"), D("100"), 50.0, D("1"), D("0"), D("0"), "sell_1")
 
 
-def result(mode: TimingMode, return_pct: str, mdd: str = "5", trades=()) -> TimingBacktestResult:
+def cycle(minute: int, pnl: str) -> TimingCycle:
+    start = datetime(2026, 6, 1, 0, minute, tzinfo=timezone.utc)
+    start_value = D("100")
+    end_value = start_value + D(pnl)
+    return TimingCycle(
+        start_timestamp=start,
+        end_timestamp=start.replace(minute=minute + 1),
+        start_value=start_value,
+        end_value=end_value,
+        pnl=D(pnl),
+        return_pct=D(pnl),
+    )
+
+
+def result(mode: TimingMode, return_pct: str, mdd: str = "5", trades=(), cycles=()) -> TimingBacktestResult:
     return TimingBacktestResult(
         mode=mode,
         final_value=D("3000000") * (D("1") + D(return_pct) / D("100")),
@@ -27,6 +41,7 @@ def result(mode: TimingMode, return_pct: str, mdd: str = "5", trades=()) -> Timi
         final_quantity=D("0"),
         final_phase="sell_1",
         trades=tuple(trades),
+        cycles=tuple(cycles),
     )
 
 
@@ -63,8 +78,12 @@ def study_fixture(
                     if mode == TimingMode.HOLD_30S:
                         value = hold_stress if slippage == D("0.003") else hold_holdout
                         mdd = hold_mdd
-                    trades = full_trades if segment == "full" and protected and slippage == D("0.0005") else ()
-                    segment_runs[run_key(mode, slippage, protected=protected)] = result(mode, value, mdd, trades)
+                    is_primary = segment == "full" and protected and slippage == D("0.0005")
+                    trades = full_trades if is_primary else ()
+                    cycles = (cycle(0, "4"), cycle(2, "3")) if is_primary else ()
+                    segment_runs[run_key(mode, slippage, protected=protected)] = result(
+                        mode, value, mdd, trades, cycles
+                    )
         runs[segment] = segment_runs
     recommendation, reason = evaluate_recommendation(runs)
     return TimingStudyResult(
@@ -163,25 +182,74 @@ def test_report_is_inconclusive_when_coverage_is_under_sixty_days():
 
 
 def test_report_is_inconclusive_when_any_primary_mode_has_fewer_than_two_cycles():
-    one_cycle = (trade("sell_1", 0), trade("buy_1", 1))
-    report = render_timing_study_markdown(
-        study_fixture(full_trades=one_cycle),
-        metadata_fixture() | {"coverage_days": "60"},
+    study = study_fixture()
+    primary_key = run_key(TimingMode.IMMEDIATE, D("0.0005"), protected=True)
+    study.runs["full"][primary_key] = result(
+        TimingMode.IMMEDIATE, "7", cycles=(cycle(0, "4"),)
     )
+    report = render_timing_study_markdown(study, metadata_fixture() | {"coverage_days": "60"})
 
     assert "Recommendation: **inconclusive**" in report
     assert "fewer than two completed buy/sell cycles" in report
     assert "Completed cycles: `1`" in report
 
 
-def test_report_counts_completed_cycles_deterministically_from_trades():
-    two_cycles = (
-        trade("sell_1", 0), trade("sell_2", 1), trade("buy_1", 2), trade("buy_2", 3),
-        trade("sell_1", 4), trade("buy_1", 5),
-    )
+def test_report_uses_inventory_round_trips_and_reports_cycle_contribution():
     report = render_timing_study_markdown(
-        study_fixture(full_trades=two_cycles),
-        metadata_fixture() | {"coverage_days": "60"},
+        study_fixture(), metadata_fixture() | {"coverage_days": "60"}
     )
 
     assert "Completed cycles: `2`" in report
+    assert "best cycle P&L" in report
+    assert "worst cycle P&L" in report
+
+
+def test_report_is_inconclusive_when_one_cycle_drives_candidate_edge():
+    study = study_fixture(
+        immediate_holdout="14",
+        immediate_stress="13",
+        hold_holdout="6",
+    )
+    key = run_key(TimingMode.IMMEDIATE, D("0.0005"), protected=True)
+    study.runs["full"][key] = result(
+        TimingMode.IMMEDIATE,
+        "7",
+        cycles=(cycle(0, "9"), cycle(2, "1")),
+    )
+
+    report = render_timing_study_markdown(
+        study, metadata_fixture() | {"coverage_days": "60"}
+    )
+
+    assert "Recommendation: **inconclusive**" in report
+    assert "one cycle contributed more than 50%" in report
+
+
+def test_event_differences_align_same_candle_actions_and_report_timing_delta():
+    study = study_fixture()
+    completed_key = run_key(TimingMode.COMPLETED, D("0.0005"), protected=True)
+    immediate_key = run_key(TimingMode.IMMEDIATE, D("0.0005"), protected=True)
+    candle = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    completed_trade = TimingTrade(
+        "buy_1", candle.replace(minute=5), candle, candle.replace(minute=5),
+        D("100"), D("100"), D("100"), 40.0, D("1"), D("0"), D("1"), "buy_2"
+    )
+    immediate_trade = TimingTrade(
+        "buy_1", candle.replace(minute=4, second=30), candle,
+        candle.replace(minute=4, second=31), D("100"), D("100"), D("100"),
+        40.0, D("1"), D("0"), D("1"), "buy_2"
+    )
+    study.runs["full"][completed_key] = result(
+        TimingMode.COMPLETED, "7", trades=(completed_trade,), cycles=(cycle(0, "4"), cycle(2, "3"))
+    )
+    study.runs["full"][immediate_key] = result(
+        TimingMode.IMMEDIATE, "7", trades=(immediate_trade,), cycles=(cycle(0, "4"), cycle(2, "3"))
+    )
+
+    report = render_timing_study_markdown(
+        study, metadata_fixture() | {"coverage_days": "60"}
+    )
+
+    assert "1 matched candle/action events" in report
+    assert "mean signal lead 30.00s" in report
+    assert "0 mode-only; 0 completed-only" in report

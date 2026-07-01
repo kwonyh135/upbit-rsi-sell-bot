@@ -43,6 +43,16 @@ class TimingTrade:
 
 
 @dataclass(frozen=True)
+class TimingCycle:
+    start_timestamp: datetime
+    end_timestamp: datetime
+    start_value: Decimal
+    end_value: Decimal
+    pnl: Decimal
+    return_pct: Decimal
+
+
+@dataclass(frozen=True)
 class TimingBacktestResult:
     mode: TimingMode
     final_value: Decimal
@@ -54,6 +64,7 @@ class TimingBacktestResult:
     final_quantity: Decimal
     final_phase: str
     trades: tuple[TimingTrade, ...]
+    cycles: tuple[TimingCycle, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -88,6 +99,8 @@ def run_timing_backtest(
     tracker = SignalTracker()
     pending: PendingSignal | None = None
     trades: list[TimingTrade] = []
+    cycles: list[TimingCycle] = []
+    cycle_start: tuple[datetime, Decimal] | None = None
     rsi_preview = WilderRsiPreview()
     completed_bars: list[FiveMinuteBar] = []
     current_bar: FiveMinuteBar | None = None
@@ -96,26 +109,52 @@ def run_timing_backtest(
     risk_streak = 0
     equity_points = [config.initial_krw]
 
+    def fill_pending(tick: SecondCandle, *, allow_equal: bool = False) -> None:
+        nonlocal state, pending, cycle_start
+        if pending is None:
+            return
+        is_fillable = (
+            tick.timestamp >= pending.signal.timestamp
+            if allow_equal
+            else tick.timestamp > pending.signal.timestamp
+        )
+        if not is_fillable:
+            return
+        previous_state = state
+        state, trade = _fill_signal(state, pending, tick, config)
+        trades.append(trade)
+        if previous_state.quantity == 0 and state.quantity > 0:
+            cycle_start = (trade.timestamp, previous_state.cash)
+        elif previous_state.quantity > 0 and state.quantity == 0 and cycle_start is not None:
+            start_timestamp, start_value = cycle_start
+            pnl = state.cash - start_value
+            cycles.append(
+                TimingCycle(
+                    start_timestamp=start_timestamp,
+                    end_timestamp=trade.timestamp,
+                    start_value=start_value,
+                    end_value=state.cash,
+                    pnl=pnl,
+                    return_pct=(pnl / start_value * Decimal("100") if start_value else Decimal("0")),
+                )
+            )
+            cycle_start = None
+        pending = None
+
     for tick in ordered:
-        if pending is not None and tick.timestamp > pending.signal.timestamp:
-            state, trade = _fill_signal(state, pending, tick, config)
-            trades.append(trade)
-            equity_points.append(state.cash + state.quantity * tick.close)
-            pending = None
+        fill_pending(tick)
 
         bucket = five_minute_bucket(tick.timestamp)
         matured, tracker = mature_held_signal(tracker, tick.timestamp)
         if matured is not None and pending is None:
             pending = PendingSignal(matured, hold_signal_price or tick.close)
             hold_signal_price = None
-            if tick.timestamp > matured.timestamp:
-                state, trade = _fill_signal(state, pending, tick, config)
-                trades.append(trade)
-                equity_points.append(state.cash + state.quantity * tick.close)
-                pending = None
+            fill_pending(tick)
 
         if current_bar is None or current_bar.timestamp != bucket:
+            boundary_signal_created = False
             if current_bar is not None:
+                boundary = current_bar.timestamp + timedelta(minutes=5)
                 completed_rsi = rsi_preview.preview(current_bar.close)
                 if config.mode != TimingMode.COMPLETED:
                     false_intrabar_signals += sum(
@@ -125,8 +164,6 @@ def run_timing_backtest(
                         and trade.action != "emergency_sell"
                         and not _action_confirmed(trade.action, completed_rsi)
                     )
-                equity_points.append(state.cash + state.quantity * current_bar.close)
-
                 risk_blocks_normal = False
                 if config.protection is not None and state.quantity > 0:
                     window = [*completed_bars, current_bar][-config.protection.high_window_bars :]
@@ -149,11 +186,12 @@ def run_timing_backtest(
                     if risk_streak >= config.protection.confirmations:
                         emergency = TimedSignal(
                             action="emergency_sell",
-                            timestamp=tick.timestamp,
+                            timestamp=boundary,
                             candle_start=current_bar.timestamp,
                             rsi_value=completed_rsi or 0.0,
                         )
                         pending = PendingSignal(emergency, current_bar.close)
+                        boundary_signal_created = True
                         risk_streak = 0
                 else:
                     risk_streak = 0
@@ -165,7 +203,7 @@ def run_timing_backtest(
                 ):
                     signal, tracker = observe_signal(
                         mode=config.mode,
-                        timestamp=tick.timestamp,
+                        timestamp=boundary,
                         candle_start=current_bar.timestamp,
                         rsi_value=completed_rsi,
                         phase=state.phase,
@@ -175,9 +213,12 @@ def run_timing_backtest(
                     )
                     if signal is not None:
                         pending = PendingSignal(signal, current_bar.close)
+                        boundary_signal_created = True
                 rsi_preview.append(current_bar.close)
                 completed_bars.append(current_bar)
             current_bar = FiveMinuteBar(bucket, tick.open, tick.high, tick.low, tick.close, tick.volume)
+            if boundary_signal_created:
+                fill_pending(tick, allow_equal=True)
         else:
             current_bar = FiveMinuteBar(
                 bucket,
@@ -207,6 +248,7 @@ def run_timing_backtest(
                 hold_signal_price = tick.close
             if signal is not None and pending is None:
                 pending = PendingSignal(signal, tick.close)
+        equity_points.append(state.cash + state.quantity * tick.close)
 
     final_value = state.cash + state.quantity * ordered[-1].close
     equity_points.append(final_value)
@@ -227,6 +269,7 @@ def run_timing_backtest(
         final_quantity=state.quantity,
         final_phase=state.phase,
         trades=tuple(trades),
+        cycles=tuple(cycles),
     )
 
 

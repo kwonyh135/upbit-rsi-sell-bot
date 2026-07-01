@@ -86,8 +86,46 @@ def download_second_candles(
 ) -> list[SecondCandle]:
     saved = load_second_snapshot(snapshot_path) if snapshot_path.exists() else []
     unique = {item.timestamp: item for item in saved if start <= item.timestamp < end}
-    cursor = min(unique) if unique else end
-    while cursor > start:
+    if unique:
+        newest_saved = max(unique)
+        _download_backwards(
+            client,
+            market,
+            cursor=end,
+            stop_at=newest_saved,
+            start=start,
+            end=end,
+            unique=unique,
+            snapshot_path=snapshot_path,
+            sleep=sleep,
+        )
+    _download_backwards(
+        client,
+        market,
+        cursor=min(unique) if unique else end,
+        stop_at=start,
+        start=start,
+        end=end,
+        unique=unique,
+        snapshot_path=snapshot_path,
+        sleep=sleep,
+    )
+    return [unique[key] for key in sorted(unique)]
+
+
+def _download_backwards(
+    client,
+    market: str,
+    *,
+    cursor: datetime,
+    stop_at: datetime,
+    start: datetime,
+    end: datetime,
+    unique: dict[datetime, SecondCandle],
+    snapshot_path: Path,
+    sleep,
+) -> None:
+    while cursor > stop_at:
         page = client.get_second_candles(market, count=200, to=cursor.isoformat())
         if not page:
             break
@@ -101,4 +139,3 @@ def download_second_candles(
         cursor = next_cursor
         save_second_snapshot(list(unique.values()), snapshot_path)
         sleep(0.12)
-    return [unique[key] for key in sorted(unique)]

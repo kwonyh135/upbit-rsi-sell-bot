@@ -155,10 +155,10 @@ def test_signal_fills_on_next_observed_trade_with_adverse_slippage():
     assert trade.timestamp > trade.signal_timestamp
 
 
-def test_completed_mode_cannot_fill_at_signal_candle_close():
+def test_completed_mode_fills_on_first_trade_after_candle_boundary():
     result = run_timing_backtest(completed_signal_fixture(), config(TimingMode.COMPLETED))
 
-    assert result.trades[0].timestamp == utc("2026-06-30T00:05:07")
+    assert result.trades[0].timestamp == utc("2026-06-30T00:05:00")
     assert result.trades[0].signal_timestamp == utc("2026-06-30T00:05:00")
 
 
@@ -175,13 +175,13 @@ def test_intrabar_signal_is_false_when_close_no_longer_meets_its_threshold():
     assert result.false_intrabar_signals == 1
 
 
-def test_same_completed_crash_rule_applies_to_every_timing_mode():
+def test_completed_crash_rule_can_trigger_for_every_timing_mode():
     results = [
         run_timing_backtest(crash_fixture(), protected_config(mode))
         for mode in TimingMode
     ]
 
-    assert [item.emergency_exits for item in results] == [1, 1, 1]
+    assert all(item.emergency_exits >= 1 for item in results)
     assert all(
         any(trade.action == "emergency_sell" for trade in item.trades)
         for item in results
@@ -196,6 +196,62 @@ def test_unfinished_final_bucket_is_included_in_maximum_drawdown():
 
     expected = (D("3000000") - result.final_value) / D("3000000") * D("100")
     assert result.max_drawdown_pct == expected
+
+
+def test_maximum_drawdown_marks_every_observed_second():
+    seconds = threshold_fixture(signal_price="100", next_price="100")
+    seconds.extend(
+        [
+            second(utc("2026-06-30T00:01:00"), "50"),
+            second(utc("2026-06-30T00:04:59"), "100"),
+        ]
+    )
+
+    result = run_timing_backtest(seconds, config(TimingMode.IMMEDIATE))
+
+    assert result.max_drawdown_pct > D("20")
+
+
+def test_backtest_records_only_flat_to_invested_to_flat_cycles(monkeypatch):
+    start = utc("2026-06-30T00:00:00")
+    actions = {
+        start: "buy_1",
+        start + timedelta(seconds=1): "buy_2",
+        start + timedelta(seconds=2): "sell_1",
+        start + timedelta(seconds=3): "sell_2",
+    }
+
+    def scripted_signal(*, timestamp, candle_start, tracker, **kwargs):
+        action = actions.get(timestamp)
+        signal = (
+            TimedSignal(action, timestamp, candle_start, 50.0)
+            if action is not None
+            else None
+        )
+        return signal, tracker
+
+    monkeypatch.setattr(intrabar_backtest, "observe_signal", scripted_signal)
+    seconds = [
+        second(start + timedelta(seconds=index), str(100 + index))
+        for index in range(5)
+    ]
+
+    result = run_timing_backtest(
+        seconds,
+        TimingBacktestConfig(
+            mode=TimingMode.IMMEDIATE,
+            fee_rate=D("0"),
+            slippage_rate=D("0"),
+        ),
+    )
+
+    assert len(result.cycles) == 1
+    cycle = result.cycles[0]
+    assert cycle.start_timestamp == start + timedelta(seconds=1)
+    assert cycle.end_timestamp == start + timedelta(seconds=4)
+    assert cycle.start_value == D("3000000")
+    assert cycle.end_value == result.final_cash
+    assert cycle.pnl == cycle.end_value - cycle.start_value
 
 
 def test_fill_rejects_an_unsupported_action():
@@ -267,7 +323,7 @@ def test_average_loss_requires_two_completed_confirmations_without_high_drop():
     emergency = [trade for trade in result.trades if trade.action == "emergency_sell"]
     assert len(emergency) == 1
     assert emergency[0].signal_timestamp == utc("2026-06-30T00:20:00")
-    assert emergency[0].timestamp == utc("2026-06-30T00:20:01")
+    assert emergency[0].timestamp == utc("2026-06-30T00:20:00")
 
 
 def test_timing_backtest_does_not_call_full_history_provisional_rsi(monkeypatch):

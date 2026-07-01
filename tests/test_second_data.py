@@ -54,10 +54,19 @@ def test_second_snapshot_round_trips_and_sorts(tmp_path):
     assert load_second_snapshot(path) == [earlier, later]
 
 
-def test_download_resumes_before_oldest_saved_timestamp(tmp_path):
+def test_download_refreshes_latest_interval_then_extends_before_oldest(tmp_path):
     path = tmp_path / "seconds.csv"
     save_second_snapshot([second("2026-06-30T00:01:00+00:00", "100")], path)
-    client = FakeSecondClient([[raw_second("2026-06-30T00:00:30", 99)]])
+    client = FakeSecondClient(
+        [
+            [
+                raw_second("2026-06-30T00:01:30", 101),
+                raw_second("2026-06-30T00:01:00", 100),
+            ],
+            [raw_second("2026-06-30T00:00:30", 99)],
+            [],
+        ]
+    )
 
     result = download_second_candles(
         client,
@@ -68,5 +77,10 @@ def test_download_resumes_before_oldest_saved_timestamp(tmp_path):
         sleep=lambda _: None,
     )
 
-    assert client.calls[0]["to"].startswith("2026-06-30T00:01:00")
-    assert [item.timestamp.second for item in result] == [30, 0]
+    assert client.calls[0]["to"].startswith("2026-06-30T00:02:00")
+    assert client.calls[1]["to"].startswith("2026-06-30T00:01:00")
+    assert [item.timestamp.strftime("%H:%M:%S") for item in result] == [
+        "00:00:30",
+        "00:01:00",
+        "00:01:30",
+    ]

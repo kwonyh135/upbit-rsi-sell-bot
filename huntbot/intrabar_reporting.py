@@ -3,7 +3,7 @@ from dataclasses import asdict
 from datetime import datetime
 from decimal import Decimal
 
-from huntbot.intrabar_backtest import TimingBacktestResult, TimingTrade
+from huntbot.intrabar_backtest import TimingBacktestResult
 from huntbot.intrabar_signals import TimingMode
 from huntbot.intrabar_study import TimingStudyResult
 
@@ -42,7 +42,7 @@ def render_timing_study_markdown(study: TimingStudyResult, metadata: dict) -> st
     lines.extend(["", "## Cycle Concentration", ""])
     for mode, result in study.primary.items():
         lines.append(
-            f"- {mode}: Completed cycles: `{completed_cycle_count(result.trades)}`; "
+            f"- {mode}: Completed cycles: `{completed_cycle_count(result)}`; "
             f"{_cycle_concentration(result)}"
         )
 
@@ -72,7 +72,7 @@ def timing_study_to_json(study: TimingStudyResult, metadata: dict) -> str:
     serialized_study["recommendation"] = recommendation
     serialized_study["recommendation_reason"] = reason
     serialized_study["completed_cycles"] = {
-        mode: completed_cycle_count(result.trades)
+        mode: completed_cycle_count(result)
         for mode, result in study.primary.items()
     }
     payload = {"metadata": metadata, "study": serialized_study}
@@ -85,27 +85,15 @@ def timing_study_to_json(study: TimingStudyResult, metadata: dict) -> str:
     ) + "\n"
 
 
-def completed_cycle_count(trades: tuple[TimingTrade, ...]) -> int:
-    cycles = 0
-    saw_buy = False
-    saw_sell = False
-    for trade in trades:
-        if trade.action.startswith("buy"):
-            saw_buy = True
-        elif trade.action.startswith("sell") or trade.action == "emergency_sell":
-            saw_sell = True
-        if saw_buy and saw_sell:
-            cycles += 1
-            saw_buy = False
-            saw_sell = False
-    return cycles
+def completed_cycle_count(result: TimingBacktestResult) -> int:
+    return len(result.cycles)
 
 
 def _reported_recommendation(study: TimingStudyResult, metadata: dict) -> tuple[str, str]:
     if Decimal(str(metadata["coverage_days"])) < Decimal("60"):
         return "inconclusive", "coverage is under 60 days"
     cycle_counts = {
-        mode: completed_cycle_count(result.trades)
+        mode: completed_cycle_count(result)
         for mode, result in study.primary.items()
     }
     if any(count < 2 for count in cycle_counts.values()):
@@ -113,6 +101,13 @@ def _reported_recommendation(study: TimingStudyResult, metadata: dict) -> tuple[
             "inconclusive",
             "at least one primary full-period timing mode has fewer than two completed buy/sell cycles",
         )
+    selected = study.primary.get(study.recommendation)
+    if (
+        study.recommendation != TimingMode.COMPLETED.value
+        and selected is not None
+        and _positive_cycle_share(selected) > Decimal("50")
+    ):
+        return "inconclusive", "one cycle contributed more than 50% of positive cycle P&L"
     return study.recommendation, study.recommendation_reason
 
 
@@ -150,15 +145,21 @@ def _costs(result: TimingBacktestResult) -> tuple[Decimal, Decimal]:
 
 
 def _cycle_concentration(result: TimingBacktestResult) -> str:
-    if not result.trades:
-        return "no completed trade events"
-    daily: dict[str, int] = {}
-    for trade in result.trades:
-        day = trade.timestamp.date().isoformat()
-        daily[day] = daily.get(day, 0) + 1
-    day, count = max(daily.items(), key=lambda item: (item[1], item[0]))
-    share = Decimal(count) / Decimal(len(result.trades)) * Decimal("100")
-    return f"busiest UTC day {day} held {count}/{len(result.trades)} events ({_pct(share)})"
+    if not result.cycles:
+        return "no completed cycles"
+    best = max(result.cycles, key=lambda cycle: cycle.pnl)
+    worst = min(result.cycles, key=lambda cycle: cycle.pnl)
+    return (
+        f"best cycle P&L {_krw(best.pnl)} ({_pct(_positive_cycle_share(result))} of positive P&L); "
+        f"worst cycle P&L {_krw(worst.pnl)}"
+    )
+
+
+def _positive_cycle_share(result: TimingBacktestResult) -> Decimal:
+    positive = [cycle.pnl for cycle in result.cycles if cycle.pnl > 0]
+    if not positive:
+        return Decimal("0")
+    return max(positive) / sum(positive, Decimal("0")) * Decimal("100")
 
 
 def _event_difference(
@@ -166,11 +167,24 @@ def _event_difference(
     result: TimingBacktestResult,
     completed: TimingBacktestResult,
 ) -> str:
-    events = {(trade.action, trade.signal_timestamp) for trade in result.trades}
-    baseline = {(trade.action, trade.signal_timestamp) for trade in completed.trades}
+    events = {
+        (trade.signal_candle_start, trade.action): trade
+        for trade in result.trades
+    }
+    baseline = {
+        (trade.signal_candle_start, trade.action): trade
+        for trade in completed.trades
+    }
+    matched = events.keys() & baseline.keys()
+    leads = [
+        Decimal(str((baseline[key].signal_timestamp - events[key].signal_timestamp).total_seconds()))
+        for key in matched
+    ]
+    mean_lead = sum(leads, Decimal("0")) / Decimal(len(leads)) if leads else Decimal("0")
     return (
-        f"- {label} vs completed: {len(events - baseline)} unique events; "
-        f"{len(baseline - events)} completed-mode events absent."
+        f"- {label} vs completed: {len(matched)} matched candle/action events; "
+        f"mean signal lead {mean_lead:.2f}s; {len(events.keys() - baseline.keys())} mode-only; "
+        f"{len(baseline.keys() - events.keys())} completed-only."
     )
 
 
