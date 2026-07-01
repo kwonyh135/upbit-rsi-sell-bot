@@ -268,3 +268,16 @@ def test_average_loss_requires_two_completed_confirmations_without_high_drop():
     assert len(emergency) == 1
     assert emergency[0].signal_timestamp == utc("2026-06-30T00:20:00")
     assert emergency[0].timestamp == utc("2026-06-30T00:20:01")
+
+
+def test_timing_backtest_does_not_call_full_history_provisional_rsi(monkeypatch):
+    def reject_full_history(*args, **kwargs):
+        raise AssertionError("full-history provisional_rsi called")
+
+    monkeypatch.setattr("huntbot.intrabar_signals.provisional_rsi", reject_full_history)
+    assert not hasattr(intrabar_backtest, "provisional_rsi")
+
+    run_timing_backtest(
+        threshold_fixture(signal_price="100", next_price="102"),
+        config(TimingMode.IMMEDIATE),
+    )

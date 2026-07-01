@@ -4,6 +4,7 @@ from decimal import Decimal
 from typing import Sequence
 
 from huntbot.crash_backtest import ProtectionConfig, evaluate_protection
+from huntbot.indicators import WilderRsiPreview
 from huntbot.intrabar_signals import (
     FiveMinuteBar,
     SignalTracker,
@@ -12,7 +13,6 @@ from huntbot.intrabar_signals import (
     five_minute_bucket,
     mature_held_signal,
     observe_signal,
-    provisional_rsi,
 )
 from huntbot.second_data import SecondCandle
 
@@ -88,7 +88,7 @@ def run_timing_backtest(
     tracker = SignalTracker()
     pending: PendingSignal | None = None
     trades: list[TimingTrade] = []
-    completed_closes: list[Decimal] = []
+    rsi_preview = WilderRsiPreview()
     completed_bars: list[FiveMinuteBar] = []
     current_bar: FiveMinuteBar | None = None
     hold_signal_price: Decimal | None = None
@@ -116,7 +116,7 @@ def run_timing_backtest(
 
         if current_bar is None or current_bar.timestamp != bucket:
             if current_bar is not None:
-                completed_rsi = provisional_rsi(completed_closes, current_bar.close)
+                completed_rsi = rsi_preview.preview(current_bar.close)
                 if config.mode != TimingMode.COMPLETED:
                     false_intrabar_signals += sum(
                         1
@@ -175,7 +175,7 @@ def run_timing_backtest(
                     )
                     if signal is not None:
                         pending = PendingSignal(signal, current_bar.close)
-                completed_closes.append(current_bar.close)
+                rsi_preview.append(current_bar.close)
                 completed_bars.append(current_bar)
             current_bar = FiveMinuteBar(bucket, tick.open, tick.high, tick.low, tick.close, tick.volume)
         else:
@@ -189,7 +189,7 @@ def run_timing_backtest(
             )
 
         if config.mode != TimingMode.COMPLETED:
-            rsi_value = provisional_rsi(completed_closes, tick.close)
+            rsi_value = rsi_preview.preview(tick.close)
             previous_active_since = tracker.active_since
             signal, tracker = observe_signal(
                 mode=config.mode,
