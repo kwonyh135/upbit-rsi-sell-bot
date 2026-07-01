@@ -3,7 +3,7 @@ from dataclasses import asdict
 from datetime import datetime
 from decimal import Decimal
 
-from huntbot.intrabar_backtest import TimingBacktestResult
+from huntbot.intrabar_backtest import TimingBacktestResult, TimingTrade
 from huntbot.intrabar_signals import TimingMode
 from huntbot.intrabar_study import TimingStudyResult
 
@@ -12,6 +12,7 @@ FEE_RATE = Decimal("0.0005")
 
 
 def render_timing_study_markdown(study: TimingStudyResult, metadata: dict) -> str:
+    recommendation, reason = _reported_recommendation(study, metadata)
     lines = [
         "# KRW-HUNT Intrabar RSI Timing Study",
         "",
@@ -27,9 +28,9 @@ def render_timing_study_markdown(study: TimingStudyResult, metadata: dict) -> st
         "",
         "## Recommendation",
         "",
-        f"Recommendation: **{study.recommendation}**",
+        f"Recommendation: **{recommendation}**",
         "",
-        f"Reason: {study.recommendation_reason}.",
+        f"Reason: {reason}.",
     ]
     for segment, title in (
         ("full", "Full Period"),
@@ -40,7 +41,10 @@ def render_timing_study_markdown(study: TimingStudyResult, metadata: dict) -> st
 
     lines.extend(["", "## Cycle Concentration", ""])
     for mode, result in study.primary.items():
-        lines.append(f"- {mode}: {_cycle_concentration(result)}")
+        lines.append(
+            f"- {mode}: Completed cycles: `{completed_cycle_count(result.trades)}`; "
+            f"{_cycle_concentration(result)}"
+        )
 
     lines.extend(["", "## Event-Level Differences", ""])
     completed = study.primary[TimingMode.COMPLETED.value]
@@ -63,7 +67,15 @@ def render_timing_study_markdown(study: TimingStudyResult, metadata: dict) -> st
 
 
 def timing_study_to_json(study: TimingStudyResult, metadata: dict) -> str:
-    payload = {"metadata": metadata, "study": asdict(study)}
+    recommendation, reason = _reported_recommendation(study, metadata)
+    serialized_study = asdict(study)
+    serialized_study["recommendation"] = recommendation
+    serialized_study["recommendation_reason"] = reason
+    serialized_study["completed_cycles"] = {
+        mode: completed_cycle_count(result.trades)
+        for mode, result in study.primary.items()
+    }
+    payload = {"metadata": metadata, "study": serialized_study}
     return json.dumps(
         payload,
         indent=2,
@@ -71,6 +83,37 @@ def timing_study_to_json(study: TimingStudyResult, metadata: dict) -> str:
         ensure_ascii=True,
         default=_json_default,
     ) + "\n"
+
+
+def completed_cycle_count(trades: tuple[TimingTrade, ...]) -> int:
+    cycles = 0
+    saw_buy = False
+    saw_sell = False
+    for trade in trades:
+        if trade.action.startswith("buy"):
+            saw_buy = True
+        elif trade.action.startswith("sell") or trade.action == "emergency_sell":
+            saw_sell = True
+        if saw_buy and saw_sell:
+            cycles += 1
+            saw_buy = False
+            saw_sell = False
+    return cycles
+
+
+def _reported_recommendation(study: TimingStudyResult, metadata: dict) -> tuple[str, str]:
+    if Decimal(str(metadata["coverage_days"])) < Decimal("60"):
+        return "inconclusive", "coverage is under 60 days"
+    cycle_counts = {
+        mode: completed_cycle_count(result.trades)
+        for mode, result in study.primary.items()
+    }
+    if any(count < 2 for count in cycle_counts.values()):
+        return (
+            "inconclusive",
+            "at least one primary full-period timing mode has fewer than two completed buy/sell cycles",
+        )
+    return study.recommendation, study.recommendation_reason
 
 
 def _matrix_section(

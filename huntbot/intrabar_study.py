@@ -49,7 +49,7 @@ def study_config(
         protection = ProtectionConfig(
             family="fixed",
             name="fixed-6-12-two-candle",
-            high_window_bars=3,
+            high_window_bars=1,
             high_drop_pct=Decimal("6"),
             average_loss_pct=Decimal("12"),
             confirmations=2,
@@ -100,19 +100,28 @@ def evaluate_recommendation(
         holdout[run_key(mode, BASE_SLIPPAGE, protected=True)]
         for mode in (TimingMode.IMMEDIATE, TimingMode.HOLD_30S)
     ]
-    candidate = max(candidates, key=lambda result: result.return_pct)
-    if candidate.return_pct <= completed.return_pct:
-        return TimingMode.COMPLETED.value, "holdout return did not beat completed mode"
-    if candidate.max_drawdown_pct > completed.max_drawdown_pct + Decimal("2"):
-        return TimingMode.COMPLETED.value, "holdout MDD was more than 2 percentage points higher"
-
-    stressed_candidate = holdout[
-        run_key(candidate.mode, STRESS_SLIPPAGE, protected=True)
-    ]
     stressed_completed = holdout[
         run_key(TimingMode.COMPLETED, STRESS_SLIPPAGE, protected=True)
     ]
-    if stressed_candidate.return_pct <= stressed_completed.return_pct:
-        return TimingMode.COMPLETED.value, "advantage did not survive 0.30% slippage"
-    return candidate.mode.value, "holdout return, MDD, and 0.30% slippage criteria passed"
+    eligible = []
+    failures = {}
+    for candidate in candidates:
+        if candidate.return_pct <= completed.return_pct:
+            failures[candidate.mode] = "holdout return did not beat completed mode"
+            continue
+        if candidate.max_drawdown_pct > completed.max_drawdown_pct + Decimal("2"):
+            failures[candidate.mode] = "holdout MDD was more than 2 percentage points higher"
+            continue
+        stressed_candidate = holdout[
+            run_key(candidate.mode, STRESS_SLIPPAGE, protected=True)
+        ]
+        if stressed_candidate.return_pct <= stressed_completed.return_pct:
+            failures[candidate.mode] = "advantage did not survive 0.30% slippage"
+            continue
+        eligible.append(candidate)
 
+    if not eligible:
+        best = max(candidates, key=lambda result: result.return_pct)
+        return TimingMode.COMPLETED.value, failures[best.mode]
+    candidate = max(eligible, key=lambda result: result.return_pct)
+    return candidate.mode.value, "holdout return, MDD, and 0.30% slippage criteria passed"

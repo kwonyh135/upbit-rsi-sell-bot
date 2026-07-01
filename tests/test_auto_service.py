@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -35,6 +35,38 @@ def test_intrabar_backtest_parser_accepts_snapshot_and_days():
 
     assert args.snapshot.endswith("test-seconds.csv")
     assert args.days == 90
+
+
+def test_intrabar_backtest_parser_defaults():
+    args = build_parser().parse_args(["backtest-intrabar-rsi"])
+
+    assert args.snapshot is None
+    assert args.days == 90
+
+
+def test_intrabar_default_download_uses_public_client_window_and_snapshot(monkeypatch):
+    now = datetime.now(timezone.utc)
+    seconds = [
+        SecondCandle("KRW-HUNT", now, *(Decimal("100"),) * 4, Decimal("1")),
+        SecondCandle("KRW-HUNT", now + timedelta(seconds=1), *(Decimal("100"),) * 4, Decimal("1")),
+    ]
+    client = object()
+    captured = {}
+    monkeypatch.setattr(huntbot_main, "UpbitClient", lambda: client)
+    monkeypatch.setattr(huntbot_main, "run_timing_study", lambda loaded: object())
+    monkeypatch.setattr(huntbot_main, "write_timing_outputs", lambda *args: None)
+
+    def download(received_client, market, *, start, end, snapshot_path):
+        captured.update(client=received_client, market=market, start=start, end=end, snapshot_path=snapshot_path)
+        return seconds
+
+    monkeypatch.setattr(huntbot_main, "download_second_candles", download)
+
+    assert huntbot_main.run_intrabar_rsi_command(snapshot=None, days=90) == 0
+    assert captured["client"] is client
+    assert captured["market"] == "KRW-HUNT"
+    assert captured["end"] - captured["start"] == timedelta(days=90)
+    assert captured["snapshot_path"] == Path("data/backtests/krw-hunt-1s-latest.csv")
 
 
 def test_intrabar_snapshot_command_writes_json_and_markdown(monkeypatch, tmp_path):
