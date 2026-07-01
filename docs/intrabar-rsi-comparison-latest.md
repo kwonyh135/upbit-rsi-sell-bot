@@ -99,7 +99,8 @@ Reason: holdout return, MDD, and 0.30% slippage criteria passed.
 ## Limitations
 
 - Missing trade seconds are periods without observed trades, not reconstructed prices.
-- Signals fill at the next observed trade with fixed adverse slippage and a 0.05% fee.
+- Completed-candle and emergency signals fill on the first boundary-or-later trade.
+- Intrabar signals fill on the next strictly later observed trade with fixed adverse slippage and a 0.05% fee.
 - Training and holdout restart from KRW 3,000,000 and do not continue full-period portfolio state.
 - Historical results do not guarantee future performance or available market liquidity.
 - This study does not change live commands, runtime state, or place orders.

@@ -110,6 +110,7 @@ def download_second_candles(
         snapshot_path=snapshot_path,
         sleep=sleep,
     )
+    save_second_snapshot(list(unique.values()), snapshot_path)
     return [unique[key] for key in sorted(unique)]
 
 

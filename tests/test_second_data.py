@@ -84,3 +84,22 @@ def test_download_refreshes_latest_interval_then_extends_before_oldest(tmp_path)
         "00:01:00",
         "00:01:30",
     ]
+
+
+def test_download_persists_trimmed_snapshot_when_api_returns_no_rows(tmp_path):
+    path = tmp_path / "seconds.csv"
+    in_range = second("2026-06-30T00:01:00+00:00", "100")
+    out_of_range = second("2026-06-29T23:59:00+00:00", "90")
+    save_second_snapshot([out_of_range, in_range], path)
+
+    result = download_second_candles(
+        FakeSecondClient([[]]),
+        "KRW-HUNT",
+        start=datetime(2026, 6, 30, 0, 0, tzinfo=timezone.utc),
+        end=datetime(2026, 6, 30, 0, 2, tzinfo=timezone.utc),
+        snapshot_path=path,
+        sleep=lambda _: None,
+    )
+
+    assert result == [in_range]
+    assert load_second_snapshot(path) == [in_range]

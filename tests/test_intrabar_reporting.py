@@ -156,6 +156,8 @@ def test_report_contains_all_matrix_and_diagnostic_sections():
     assert "Fee" in report
     assert "Slippage" in report
     assert "False signals" in report
+    assert "Completed-candle and emergency signals fill on the first boundary-or-later trade" in report
+    assert "Intrabar signals fill on the next strictly later observed trade" in report
 
 
 def test_json_is_ascii_deterministic_and_contains_metadata():
