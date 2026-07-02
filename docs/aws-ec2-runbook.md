@@ -126,6 +126,46 @@ python3 -c "import json; d=json.load(open('/home/ubuntu/auto-trading.json')); pr
 sudo install -o huntbot -g huntbot -m 600 /home/ubuntu/auto-trading.json /opt/huntbot/shared/data/state/auto-trading.json
 ```
 
+### 기존 서버를 30초 RSI 확인 코드로 갱신
+
+현재 라이브 서비스를 먼저 정지하고 프로세스가 남지 않았는지 확인합니다.
+
+```bash
+sudo systemctl disable --now huntbot-auto
+pgrep -af 'huntbot run-auto-5m' || true
+```
+
+업비트에서 미체결 주문을 확인하고, 상태파일의 `pending_order`가 `null`인지
+확인한 뒤에만 진행합니다. 코드를 갱신하고 현재 커밋을 기록합니다.
+
+```bash
+cd ~/huntbot-upload
+git fetch origin
+git checkout codex/upbit-rsi-sell-bot
+git pull --ff-only origin codex/upbit-rsi-sell-bot
+git rev-parse --short HEAD
+```
+
+라이브 상태를 시각이 포함된 이름으로 백업한 뒤 설치합니다. 새 RSI 확인 필드는
+기존 상태파일에 없어도 자동으로 `null` 기본값을 사용합니다.
+
+```bash
+stamp=$(date +%Y%m%d-%H%M%S)
+sudo cp -a /opt/huntbot/shared/data/state/auto-trading.json \
+  /opt/huntbot/shared/data/state/auto-trading.before-hold30s-$stamp.json
+sudo bash deploy/install-ubuntu.sh ~/huntbot-upload
+```
+
+서비스를 시작하기 전에 새 코드로 기존 라이브 상태가 읽히는지 확인합니다. 이
+명령은 주문을 보내지 않습니다.
+
+```bash
+sudo -u huntbot bash -lc 'cd /opt/huntbot/app && /opt/huntbot/venv/bin/python -c "from huntbot.auto_state import load_auto_state; s=load_auto_state(); print(\"phase=\", s.phase); print(\"pending_order=\", s.pending_order); print(\"rsi_signal_action=\", s.rsi_signal_action)"'
+```
+
+`pending_order=None`을 확인한 뒤 아래 1회 dry-run을 실행하고, 오류가 없을 때만
+7절의 라이브 서비스 시작 명령을 실행합니다.
+
 ## 6. 주문 없는 1회 점검
 
 라이브 서비스 시작 전에 dry-run을 한 번 실행합니다. 실제 잔고와 시세는 읽지만 주문은 보내지 않습니다.

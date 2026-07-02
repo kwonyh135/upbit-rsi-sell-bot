@@ -144,7 +144,16 @@ Dry-run still needs valid Upbit API keys because it reads real balances, but it 
 
 ## Unattended Auto Mode
 
-The unattended mode checks prices every 10 seconds. Normal RSI signals use only completed 5-minute candles and each candle is processed once.
+The unattended mode checks prices every 10 seconds. Normal orders use provisional
+five-minute RSI: completed candle closes initialize RSI and the validated current
+best bid acts as the active candle close. The same buy or sell condition must be
+observed continuously for at least 30 seconds before an order is submitted. A
+condition change, data error, emergency risk, or observation gap over 20 seconds
+resets confirmation. Logs show `status=confirming` while the timer is active.
+
+Only normal RSI timing changed. Split sizing and the `60`/`65`/`45`/`40`
+thresholds are unchanged, and completed-candle emergency protection still runs
+before every normal RSI decision.
 
 Start with one read-only cycle:
 
