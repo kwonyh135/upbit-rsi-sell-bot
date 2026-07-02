@@ -378,6 +378,25 @@ class FakeCycleClient(FakeOrderClient):
         }
 
 
+class SafeSignalClient(FakeCycleClient):
+    def __init__(self):
+        super().__init__()
+        self.five_minute_rows = [
+            _raw_candle(
+                self.now - timedelta(minutes=5 * index),
+                100,
+                high=100,
+            )
+            for index in range(20)
+        ]
+
+    def get_accounts(self):
+        return [
+            {"currency": "HUNT", "balance": "0", "avg_buy_price": "0"},
+            {"currency": "KRW", "balance": "100000", "avg_buy_price": "0"},
+        ]
+
+
 def _raw_candle(timestamp, price, high=None):
     return {
         "market": "KRW-HUNT",
@@ -427,6 +446,220 @@ def test_auto_cycle_uses_best_bid_as_current_price(tmp_path):
     )
 
     assert result.current_price == Decimal("99")
+
+
+def test_auto_cycle_confirms_provisional_rsi_for_thirty_seconds(tmp_path, monkeypatch):
+    path = tmp_path / "auto.json"
+    client = SafeSignalClient()
+    notifier = FakeNotifier()
+    monkeypatch.setattr(
+        "huntbot.auto_trader.provisional_rsi",
+        lambda *args, **kwargs: 45.0,
+        raising=False,
+    )
+
+    first = run_auto_cycle(
+        client=client,
+        notifier=notifier,
+        state_path=path,
+        live=False,
+        now=client.now,
+    )
+    second = run_auto_cycle(
+        client=client,
+        notifier=notifier,
+        state_path=path,
+        live=False,
+        now=client.now + timedelta(seconds=20),
+    )
+    mature = run_auto_cycle(
+        client=client,
+        notifier=notifier,
+        state_path=path,
+        live=False,
+        now=client.now + timedelta(seconds=30),
+    )
+
+    assert [first.status, second.status, mature.status] == [
+        "confirming",
+        "confirming",
+        "dry_run",
+    ]
+    assert mature.action == "buy_1"
+    assert load_auto_state(path).last_completed_candle == client.now.isoformat()
+    assert client.orders == []
+
+
+def test_stale_orderbook_clears_rsi_confirmation(tmp_path):
+    path = tmp_path / "auto.json"
+    client = SafeSignalClient()
+    save_auto_state(
+        AutoTradeState(
+            rsi_signal_action="buy_1",
+            rsi_signal_started_at=client.now.isoformat(),
+            rsi_signal_last_seen_at=client.now.isoformat(),
+            rsi_signal_candle=client.now.isoformat(),
+        ),
+        path,
+    )
+    client.get_orderbook = lambda market, count=1: {
+        "market": market,
+        "timestamp": int((client.now - timedelta(minutes=3)).timestamp() * 1000),
+        "orderbook_units": [{"bid_price": 100, "ask_price": 101}],
+    }
+
+    result = run_auto_cycle(
+        client=client,
+        notifier=FakeNotifier(),
+        state_path=path,
+        live=True,
+        now=client.now,
+    )
+
+    saved = load_auto_state(path)
+    assert result.status == "data_error"
+    assert saved.rsi_signal_action is None
+    assert saved.rsi_signal_started_at is None
+
+
+def test_invalid_orderbook_price_clears_confirmation_without_signal(tmp_path):
+    path = tmp_path / "auto.json"
+    client = SafeSignalClient()
+    save_auto_state(
+        AutoTradeState(
+            rsi_signal_action="buy_1",
+            rsi_signal_started_at=client.now.isoformat(),
+            rsi_signal_last_seen_at=client.now.isoformat(),
+            rsi_signal_candle=client.now.isoformat(),
+        ),
+        path,
+    )
+    client.get_orderbook = lambda market, count=1: {
+        "market": market,
+        "timestamp": int(client.now.timestamp() * 1000),
+        "orderbook_units": [{"bid_price": 0, "ask_price": 0}],
+    }
+
+    result = run_auto_cycle(
+        client=client,
+        notifier=FakeNotifier(),
+        state_path=path,
+        live=True,
+        now=client.now,
+    )
+
+    assert result.status == "data_error"
+    assert result.risk_reason == "invalid_current_price"
+    assert load_auto_state(path).rsi_signal_action is None
+    assert client.orders == []
+
+
+def test_emergency_pending_clears_rsi_confirmation(tmp_path):
+    path = tmp_path / "auto.json"
+    client = FakeCycleClient()
+    client.five_minute_rows[2] = _raw_candle(
+        client.now - timedelta(minutes=10),
+        109,
+        high=110,
+    )
+    save_auto_state(
+        AutoTradeState(
+            phase="buy_2",
+            rsi_signal_action="buy_2",
+            rsi_signal_started_at=client.now.isoformat(),
+            rsi_signal_last_seen_at=client.now.isoformat(),
+            rsi_signal_candle=client.now.isoformat(),
+        ),
+        path,
+    )
+
+    result = run_auto_cycle(
+        client=client,
+        notifier=FakeNotifier(),
+        state_path=path,
+        live=True,
+        now=client.now,
+    )
+
+    assert result.status == "emergency_pending"
+    assert load_auto_state(path).rsi_signal_action is None
+
+
+def test_below_minimum_mature_signal_is_consumed(tmp_path, monkeypatch):
+    path = tmp_path / "auto.json"
+    client = SafeSignalClient()
+    signal_candle = client.now.isoformat()
+    save_auto_state(
+        AutoTradeState(
+            rsi_signal_action="buy_1",
+            rsi_signal_started_at=(client.now - timedelta(seconds=30)).isoformat(),
+            rsi_signal_last_seen_at=(client.now - timedelta(seconds=10)).isoformat(),
+            rsi_signal_candle=signal_candle,
+        ),
+        path,
+    )
+    monkeypatch.setattr(
+        "huntbot.auto_trader.provisional_rsi",
+        lambda *args, **kwargs: 45.0,
+        raising=False,
+    )
+    original_chance = client.get_order_chance
+
+    def high_minimum(market):
+        chance = original_chance(market)
+        chance["market"]["bid"]["min_total"] = "1000000"
+        return chance
+
+    client.get_order_chance = high_minimum
+
+    result = run_auto_cycle(
+        client=client,
+        notifier=FakeNotifier(),
+        state_path=path,
+        live=True,
+        now=client.now,
+    )
+
+    saved = load_auto_state(path)
+    assert result.status == "below_minimum"
+    assert saved.last_completed_candle == signal_candle
+    assert saved.rsi_signal_action is None
+    assert client.orders == []
+
+
+def test_mature_live_signal_submits_once_and_advances_phase(tmp_path, monkeypatch):
+    path = tmp_path / "auto.json"
+    client = SafeSignalClient()
+    signal_candle = client.now.isoformat()
+    save_auto_state(
+        AutoTradeState(
+            rsi_signal_action="buy_1",
+            rsi_signal_started_at=(client.now - timedelta(seconds=30)).isoformat(),
+            rsi_signal_last_seen_at=(client.now - timedelta(seconds=10)).isoformat(),
+            rsi_signal_candle=signal_candle,
+        ),
+        path,
+    )
+    monkeypatch.setattr(
+        "huntbot.auto_trader.provisional_rsi",
+        lambda *args, **kwargs: 45.0,
+    )
+
+    result = run_auto_cycle(
+        client=client,
+        notifier=FakeNotifier(),
+        state_path=path,
+        live=True,
+        now=client.now,
+    )
+
+    saved = load_auto_state(path)
+    assert result.status == "done"
+    assert result.action == "buy_1"
+    assert saved.phase == "buy_2"
+    assert saved.last_completed_candle == signal_candle
+    assert saved.rsi_signal_action is None
+    assert len(client.orders) == 1
 
 
 def test_first_crash_observation_blocks_normal_rsi_order(tmp_path):

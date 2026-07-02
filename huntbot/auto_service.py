@@ -8,6 +8,7 @@ from pathlib import Path
 from huntbot.auto_state import AUTO_STATE_PATH, AutoTradeState, load_auto_state, save_auto_state
 from huntbot.auto_trader import run_auto_cycle
 from huntbot.config import AUTO_DRY_RUN_STATE_PATH, AUTO_LOCK_PATH, AUTO_POLL_SECONDS, LOG_DIR
+from huntbot.live_signal import clear_rsi_confirmation
 from huntbot.notifier import (
     NotificationError,
     TelegramNotifier,
@@ -88,7 +89,12 @@ def unlock_emergency(
         raise ValueError("bot is not in emergency_halt")
     if state.pending_order is not None:
         raise ValueError("pending order must be reconciled before unlock")
-    next_state = replace(state, phase="sell_1", emergency_confirmations=0, emergency_reason=None)
+    next_state = replace(
+        clear_rsi_confirmation(state),
+        phase="sell_1",
+        emergency_confirmations=0,
+        emergency_reason=None,
+    )
     save_auto_state(next_state, state_path)
     return next_state
 

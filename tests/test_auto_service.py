@@ -109,12 +109,24 @@ def test_initialize_auto_state_migrates_legacy_buyback_phase(tmp_path):
 
 def test_unlock_emergency_requires_halt_and_no_pending_order(tmp_path):
     path = tmp_path / "auto.json"
-    save_auto_state(AutoTradeState(phase="emergency_halt"), path)
+    save_auto_state(
+        AutoTradeState(
+            phase="emergency_halt",
+            rsi_signal_action="buy_1",
+            rsi_signal_started_at="2026-07-02T00:00:00+00:00",
+            rsi_signal_last_seen_at="2026-07-02T00:00:10+00:00",
+            rsi_signal_candle="2026-07-02T00:00:00+00:00",
+        ),
+        path,
+    )
 
     result = unlock_emergency(state_path=path, confirmation="UNLOCK KRW-HUNT")
 
     assert result.phase == "sell_1"
-    assert load_auto_state(path).phase == "sell_1"
+    saved = load_auto_state(path)
+    assert saved.phase == "sell_1"
+    assert saved.rsi_signal_action is None
+    assert saved.rsi_signal_started_at is None
 
 
 def test_unlock_emergency_rejects_wrong_confirmation(tmp_path):
