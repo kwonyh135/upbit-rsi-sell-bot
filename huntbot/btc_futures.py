@@ -361,7 +361,9 @@ def run_futures_backtest(
         regime = regimes.get(candle.timestamp, Regime.NEUTRAL)
         curve.append(EquityPoint(candle.timestamp, close_equity, _exposure(quantity, candle.close, close_equity), regime))
         value = rsi_values.get(candle.timestamp)
-        if value is not None and index + 1 < len(ordered):
+        if config.kind == StrategyKind.BUY_AND_HOLD and index == 0 and index + 1 < len(ordered):
+            pending_target = Decimal("1")
+        elif value is not None and index + 1 < len(ordered):
             pending_target = desired_target(config.kind, curve[-1].exposure, value, regime)
 
     if quantity:
