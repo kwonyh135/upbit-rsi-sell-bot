@@ -3,8 +3,13 @@ import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from huntbot.backtest import run_buyback_candidate_search, run_candidate_search, run_split_buyback_backtest, run_split_buyback_candidate_search
+from huntbot.bitget_public import BitgetPublicClient, complete_month_window, download_history, load_funding_snapshot
+from huntbot.btc_futures import validate_candles
+from huntbot.btc_futures_reporting import render_btc_html, render_btc_markdown
+from huntbot.btc_futures_study import run_btc_futures_study, study_to_json as btc_study_to_json
 from huntbot.crash_backtest import run_crash_study
 from huntbot.crash_reporting import render_crash_study_markdown, study_to_json
 from huntbot.auto_service import SingleInstanceLock, run_auto_service, unlock_emergency
@@ -46,6 +51,10 @@ def build_parser() -> argparse.ArgumentParser:
     intrabar = subparsers.add_parser("backtest-intrabar-rsi")
     intrabar.add_argument("--snapshot")
     intrabar.add_argument("--days", type=int, default=90)
+    btc = subparsers.add_parser("backtest-bitget-btc")
+    btc.add_argument("--months", type=int, choices=[6], default=6)
+    btc.add_argument("--candles")
+    btc.add_argument("--funding")
     subparsers.add_parser("sync-buyback-state")
     run_auto = subparsers.add_parser("run-auto-5m")
     auto_mode = run_auto.add_mutually_exclusive_group(required=True)
@@ -74,9 +83,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    load_environment()
     parser = build_parser()
     args = parser.parse_args()
+    if args.command == "backtest-bitget-btc":
+        return run_bitget_btc_command(candle_path=args.candles, funding_path=args.funding)
+    load_environment()
     if args.command == "backtest":
         return run_backtest_command()
     if args.command == "backtest-buyback":
@@ -117,6 +128,73 @@ def main() -> int:
     if args.command == "watch-buyback-5m":
         return run_buyback_watch_command(live=args.live, loop=args.loop)
     raise RuntimeError(f"unsupported command: {args.command}")
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(content, encoding="utf-8", newline="\n")
+    temporary.replace(path)
+
+
+def run_bitget_btc_command(*, candle_path: str | None, funding_path: str | None) -> int:
+    if bool(candle_path) != bool(funding_path):
+        raise ValueError("--candles and --funding must be supplied together")
+    now = datetime.now(timezone.utc)
+    warmup_start, start, end = complete_month_window(now)
+    default_candles = Path("data/backtests/bitget-btcusdt-5m-latest.csv")
+    default_funding = Path("data/backtests/bitget-btcusdt-funding-latest.csv")
+    if candle_path:
+        snapshot_candles = Path(candle_path)
+        snapshot_funding = Path(funding_path or "")
+        candles = load_candle_snapshot(snapshot_candles)
+        funding = load_funding_snapshot(snapshot_funding)
+    else:
+        snapshot_candles = default_candles
+        snapshot_funding = default_funding
+        print(f"Downloading public Bitget BTCUSDT data: {warmup_start.isoformat()} to {end.isoformat()}")
+        candles, funding = download_history(
+            BitgetPublicClient(),
+            start=warmup_start,
+            end=end,
+            candle_snapshot_path=snapshot_candles,
+            funding_snapshot_path=snapshot_funding,
+        )
+    validated, warmup_missing = validate_candles(candles, start, end)
+    test_candles = [item for item in validated if start <= item.timestamp < end]
+    test_funding = [item for item in funding if start <= item.timestamp < end]
+    study = run_btc_futures_study(validated, funding, start, end)
+    seoul = ZoneInfo("Asia/Seoul")
+    metadata = {
+        "market": "BTCUSDT",
+        "first_candle": test_candles[0].timestamp.isoformat(),
+        "last_candle": test_candles[-1].timestamp.isoformat(),
+        "first_candle_kst": test_candles[0].timestamp.astimezone(seoul).isoformat(),
+        "last_candle_kst": test_candles[-1].timestamp.astimezone(seoul).isoformat(),
+        "candle_count": len(test_candles),
+        "missing_intervals": 0,
+        "warmup_missing_intervals": warmup_missing,
+        "funding_count": len(test_funding),
+        "funding_first": test_funding[0].timestamp.isoformat() if test_funding else None,
+        "funding_last": test_funding[-1].timestamp.isoformat() if test_funding else None,
+        "funding_coverage_complete": bool(test_funding and test_funding[0].timestamp <= start),
+        "generated_at": now.isoformat(),
+    }
+    result_path = Path("data/backtests/bitget-btc-long-short-study-latest.json")
+    markdown_path = Path("docs/bitget-btc-long-short-backtest-latest.md")
+    html_path = Path("docs/bitget-btc-long-short-backtest-latest.html")
+    _atomic_write(result_path, btc_study_to_json(study, metadata))
+    _atomic_write(markdown_path, render_btc_markdown(study, metadata))
+    _atomic_write(html_path, render_btc_html(study, metadata))
+    print(f"Coverage: {metadata['first_candle']} to {metadata['last_candle']} ({len(test_candles)} candles)")
+    print(f"Missing test intervals: 0; funding records: {len(test_funding)}")
+    print(f"Candles: {snapshot_candles}")
+    print(f"Funding: {snapshot_funding}")
+    print(f"Results: {result_path}")
+    print(f"Markdown: {markdown_path}")
+    print(f"HTML: {html_path}")
+    print(f"Conclusion: {study.conclusion}; selected={study.selected_strategy}")
+    return 0
 
 
 def run_backtest_command() -> int:

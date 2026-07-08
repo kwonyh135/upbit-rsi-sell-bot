@@ -41,6 +41,9 @@ def _md_rows(runs: tuple[StudyRun, ...]) -> list[str]:
 
 
 def render_btc_markdown(study: BtcFuturesStudy, metadata: dict) -> str:
+    funding_warning = [] if metadata.get("funding_coverage_complete", True) else [
+        f"- Funding coverage warning: Bitget API records begin at `{metadata.get('funding_first')}`; earlier test settlements were unavailable and treated as zero."
+    ]
     lines = [
         "# Bitget BTCUSDT 1x Long/Short Backtest",
         "", "## 결론", "",
@@ -53,6 +56,7 @@ def render_btc_markdown(study: BtcFuturesStudy, metadata: dict) -> str:
         f"- First candle: `{metadata['first_candle']}`",
         f"- Last candle: `{metadata['last_candle']}`",
         f"- Candles: `{metadata['candle_count']}`; missing: `{metadata['missing_intervals']}`; funding: `{metadata['funding_count']}`",
+        *funding_warning,
     ]
     for title, runs in (("Full", study.full_runs), ("Development", study.development_runs), ("Holdout", study.holdout_runs)):
         lines.extend([
@@ -116,6 +120,10 @@ def _svg(result: FuturesResult, drawdown: bool = False) -> str:
 def render_btc_html(study: BtcFuturesStudy, metadata: dict) -> str:
     selected = _selected_result(study)
     reason_html = "".join(f"<li>{escape(reason)}</li>" for reason in study.conclusion_reasons) or "<li>선언된 검증 기준을 통과했습니다.</li>"
+    funding_warning = "" if metadata.get("funding_coverage_complete", True) else (
+        f"<p><b>펀딩 자료 제한:</b> 비트겟 공개 API가 {escape(str(metadata.get('funding_first')))} 이후 기록만 제공했습니다. "
+        "그 이전 펀딩은 0으로 처리했으므로 비용 비교에는 불확실성이 있습니다.</p>"
+    )
     return f"""<!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bitget BTC 롱·숏 백테스트</title><style>
@@ -123,7 +131,7 @@ def render_btc_html(study: BtcFuturesStudy, metadata: dict) -> str:
 </style></head><body><main>
 <h1>BTCUSDT 1배 롱·숏 백테스트</h1><p class="muted">비트겟 USDT-M 무기한 선물 · 최신 6개월 · 완성 5분봉</p>
 <section><span class="badge">{escape(study.conclusion)}</span><h2>요약 결론</h2><p>검증 구간 선택 전략: <b>{escape(study.selected_strategy)}</b></p><ul>{reason_html}</ul><p><b>즉시 실거래 판단이 아닙니다.</b> 통과하더라도 추가 모의투자 단계만 권장합니다.</p></section>
-<section><h2>데이터 품질</h2><div class="grid"><div class="metric">시장<b>{escape(str(metadata['market']))}</b></div><div class="metric">5분봉 수<b>{metadata['candle_count']}</b></div><div class="metric">누락 구간<b>{metadata['missing_intervals']}</b></div><div class="metric">펀딩 기록<b>{metadata['funding_count']}</b></div></div><p><small>UTC {escape(str(metadata['first_candle']))} ~ {escape(str(metadata['last_candle']))}; 보고서 날짜는 한국시간으로도 해석할 수 있습니다.</small></p></section>
+<section><h2>데이터 품질</h2><div class="grid"><div class="metric">시장<b>{escape(str(metadata['market']))}</b></div><div class="metric">5분봉 수<b>{metadata['candle_count']}</b></div><div class="metric">누락 구간<b>{metadata['missing_intervals']}</b></div><div class="metric">펀딩 기록<b>{metadata['funding_count']}</b></div></div><p><small>UTC {escape(str(metadata['first_candle']))} ~ {escape(str(metadata['last_candle']))}; 보고서 날짜는 한국시간으로도 해석할 수 있습니다.</small></p>{funding_warning}</section>
 <section><h2>전체 기간</h2><div class="table-wrap">{_table(study.full_runs)}</div></section>
 <section><h2>개발 구간</h2><div class="table-wrap">{_table(study.development_runs)}</div></section>
 <section><h2>검증 구간 (Holdout)</h2><div class="table-wrap">{_table(study.holdout_runs)}</div></section>

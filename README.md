@@ -234,6 +234,20 @@ python -m huntbot report-split-5m
 
 Open `docs/split-buyback-events-5m.html` to see the full backtest summary and recent 90-day buy/sell event table.
 
+## Bitget BTC Futures Research
+
+Run the research-only six-month BTCUSDT perpetual-futures comparison:
+
+```powershell
+.\.venv\Scripts\python.exe -m huntbot backtest-bitget-btc --months 6
+```
+
+This compares cash, BTC 1x buy-and-hold, long-only, short-only,
+bidirectional, and regime-filtered bidirectional RSI strategies. It uses
+public Bitget data, 1x exposure, taker fees, adverse slippage, and historical
+funding. It does not load API secrets, place orders, modify the HUNT bot, or
+deploy to AWS.
+
 ## AWS EC2 Ubuntu
 
 AWS에서는 `systemd`가 봇을 한 개만 실행하고 장애 시 재시작합니다. API 키, 거래 상태, 로그는 코드 배포와 분리된 `/opt/huntbot/shared`에 유지됩니다.
