@@ -5,6 +5,7 @@ import importlib
 import pytest
 
 from huntbot.models import Candle
+from huntbot.bitget_public import FundingSettlement
 
 
 START = datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -139,3 +140,61 @@ def test_regime_is_not_visible_until_four_hour_bar_closes():
     assert regimes[jump_bar_start - timedelta(minutes=5)] == btc.Regime.NEUTRAL
     assert regimes[jump_bar_start] == btc.Regime.NEUTRAL
     assert regimes[post_close_boundary] == btc.Regime.BULL
+
+
+def test_desired_targets_are_symmetric_and_regime_filtered():
+    btc = _btc()
+    assert btc.desired_target(btc.StrategyKind.LONG_ONLY, Decimal("0"), 44, btc.Regime.BEAR) == Decimal("0.5")
+    assert btc.desired_target(btc.StrategyKind.SHORT_ONLY, Decimal("0"), 61, btc.Regime.BULL) == Decimal("-0.5")
+    assert btc.desired_target(btc.StrategyKind.REGIME_FILTERED, Decimal("0"), 44, btc.Regime.BEAR) == Decimal("0")
+    assert btc.desired_target(btc.StrategyKind.REGIME_FILTERED, Decimal("0"), 61, btc.Regime.BEAR) == Decimal("-0.5")
+
+
+def test_backtest_executes_signal_at_next_open_with_adverse_slippage():
+    btc = _btc()
+    candles = [candle_at(i * 5, close=str(100 + i)) for i in range(4)]
+    candles[1] = Candle("BTCUSDT", 5, candles[1].timestamp, Decimal("102"), Decimal("103"), Decimal("101"), Decimal("102"), Decimal("1"))
+    rsi_values = {candles[0].timestamp: 44.0, candles[1].timestamp: 50.0, candles[2].timestamp: 66.0}
+    config = btc.FuturesConfig(kind=btc.StrategyKind.LONG_ONLY, slippage=Decimal("0.0002"))
+
+    result = btc.run_futures_backtest(candles, [], {}, config, rsi_values=rsi_values)
+
+    assert result.trades[0].timestamp == candles[1].timestamp
+    assert result.trades[0].market_price == Decimal("102")
+    assert result.trades[0].execution_price == Decimal("102.0204")
+    assert result.trades[0].target_exposure == Decimal("0.5")
+
+
+def test_positive_funding_is_paid_by_long_and_received_by_short():
+    btc = _btc()
+    candles = [candle_at(i * 5, close="100") for i in range(4)]
+    funding = [FundingSettlement(candles[2].timestamp, Decimal("0.001"))]
+    long_rsi = {candles[0].timestamp: 44.0}
+    short_rsi = {candles[0].timestamp: 61.0}
+
+    long = btc.run_futures_backtest(candles, funding, {}, btc.FuturesConfig(btc.StrategyKind.LONG_ONLY), rsi_values=long_rsi)
+    short = btc.run_futures_backtest(candles, funding, {}, btc.FuturesConfig(btc.StrategyKind.SHORT_ONLY), rsi_values=short_rsi)
+
+    assert long.funding_pnl < 0
+    assert short.funding_pnl > 0
+
+
+def test_each_fill_charges_taker_fee_and_exposure_stays_bounded():
+    btc = _btc()
+    candles = [candle_at(i * 5, close="100") for i in range(4)]
+    result = btc.run_futures_backtest(
+        candles,
+        [],
+        {},
+        btc.FuturesConfig(btc.StrategyKind.LONG_ONLY, initial_equity=Decimal("3000"), fee_rate=Decimal("0.0006"), slippage=Decimal("0")),
+        rsi_values={candles[0].timestamp: 44.0},
+    )
+
+    assert result.trades[0].fee == Decimal("0.9")
+    assert all(Decimal("-1") <= point.exposure <= Decimal("1") for point in result.equity_curve)
+
+
+def test_direct_reversal_closes_first_and_waits_for_later_signal():
+    btc = _btc()
+    assert btc._guard_reversal(Decimal("0.5"), Decimal("-0.5")) == Decimal("0")
+    assert btc._guard_reversal(Decimal("0"), Decimal("-0.5")) == Decimal("-0.5")
