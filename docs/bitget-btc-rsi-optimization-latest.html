@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>Bitget BTCUSDT RSI 최적화</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 32px; color: #172033; background: #f7f8fb; }
+    .card { background: white; border-radius: 16px; padding: 24px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08); margin-bottom: 18px; }
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+    .metric { background: #eef2ff; border-radius: 12px; padding: 14px; }
+    .metric span { display: block; color: #596176; font-size: 13px; }
+    .metric strong { display: block; margin-top: 6px; font-size: 18px; }
+    table { width: 100%; border-collapse: collapse; background: white; }
+    th, td { border-bottom: 1px solid #e5e7eb; padding: 10px; text-align: right; }
+    th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3) { text-align: left; }
+    th { background: #111827; color: white; }
+    .warn { color: #92400e; background: #fffbeb; border-radius: 12px; padding: 14px; }
+  </style>
+</head>
+<body>
+  <section class="card">
+    <h1>Bitget BTCUSDT RSI 최적화</h1>
+    <p>RSI 기준 변경으로 수익 조합이 있는지 확인한 연구용 백테스트입니다. 실거래 코드는 변경하지 않았습니다.</p>
+    <div class="metrics">
+      <div class="metric"><span>선택 전략</span><strong>장세 필터 롱·숏</strong></div>
+      <div class="metric"><span>RSI 기준</span><strong>롱 35/30 → 70/75, 숏 60/65 → 35/30</strong></div>
+      <div class="metric"><span>Holdout 수익</span><strong>9.23%</strong></div>
+      <div class="metric"><span>Holdout MDD</span><strong>11.62%</strong></div>
+      <div class="metric"><span>Stress 수익</span><strong>3.49%</strong></div>
+      <div class="metric"><span>결론</span><strong>inconclusive</strong></div>
+    </div>
+  </section>
+  <section class="card warn">
+    <strong>판단:</strong> negative development return, negative full-period return. 과최적화 가능성이 있으므로 실거래 전 별도 모의운영이 필요합니다.
+  </section>
+  <section class="card">
+    <h2>상위 후보</h2>
+    <table>
+      <thead><tr><th>순위</th><th>전략</th><th>RSI 기준</th><th>개발 수익</th><th>Holdout 수익</th><th>Holdout MDD</th><th>Stress 수익</th><th>사이클</th></tr></thead>
+      <tbody><tr><td>1</td><td>장세 필터 롱·숏</td><td>롱 35/30 → 70/75, 숏 60/65 → 35/30</td><td>-13.72%</td><td>9.23%</td><td>11.62%</td><td>3.49%</td><td>85</td></tr><tr><td>2</td><td>장세 필터 롱·숏</td><td>롱 35/30 → 65/70, 숏 60/65 → 35/30</td><td>-17.39%</td><td>8.93%</td><td>9.35%</td><td>2.98%</td><td>89</td></tr><tr><td>3</td><td>장세 필터 롱·숏</td><td>롱 35/30 → 70/75, 숏 65/70 → 35/30</td><td>-7.34%</td><td>7.67%</td><td>10.97%</td><td>3.23%</td><td>75</td></tr><tr><td>4</td><td>장세 필터 롱·숏</td><td>롱 35/30 → 65/70, 숏 65/70 → 35/30</td><td>-11.29%</td><td>7.37%</td><td>8.68%</td><td>2.73%</td><td>79</td></tr><tr><td>5</td><td>장세 필터 롱·숏</td><td>롱 40/35 → 70/75, 숏 60/65 → 35/30</td><td>-13.87%</td><td>7.28%</td><td>12.57%</td><td>1.39%</td><td>87</td></tr><tr><td>6</td><td>장세 필터 롱·숏</td><td>롱 35/30 → 60/65, 숏 60/65 → 35/30</td><td>-19.59%</td><td>6.80%</td><td>10.12%</td><td>0.45%</td><td>101</td></tr><tr><td>7</td><td>장세 필터 롱·숏</td><td>롱 40/35 → 65/70, 숏 60/65 → 35/30</td><td>-19.53%</td><td>6.33%</td><td>11.42%</td><td>0.04%</td><td>91</td></tr><tr><td>8</td><td>장세 필터 롱·숏</td><td>롱 40/35 → 70/75, 숏 65/70 → 35/30</td><td>-7.51%</td><td>5.74%</td><td>11.93%</td><td>1.14%</td><td>77</td></tr><tr><td>9</td><td>장세 필터 롱·숏</td><td>롱 45/40 → 70/75, 숏 60/65 → 35/30</td><td>-14.20%</td><td>5.46%</td><td>13.68%</td><td>-0.41%</td><td>88</td></tr><tr><td>10</td><td>장세 필터 롱·숏</td><td>롱 35/30 → 60/65, 숏 65/70 → 35/30</td><td>-13.65%</td><td>5.27%</td><td>9.46%</td><td>0.21%</td><td>91</td></tr><tr><td>11</td><td>장세 필터 롱·숏</td><td>롱 40/35 → 65/70, 숏 65/70 → 35/30</td><td>-13.58%</td><td>4.81%</td><td>10.77%</td><td>-0.20%</td><td>81</td></tr><tr><td>12</td><td>장세 필터 롱·숏</td><td>롱 35/30 → 70/75, 숏 65/70 → 40/35</td><td>-10.10%</td><td>4.68%</td><td>10.82%</td><td>-0.60%</td><td>98</td></tr><tr><td>13</td><td>장세 필터 롱·숏</td><td>롱 45/40 → 65/70, 숏 60/65 → 35/30</td><td>-19.80%</td><td>4.45%</td><td>13.08%</td><td>-2.05%</td><td>94</td></tr><tr><td>14</td><td>장세 필터 롱·숏</td><td>롱 35/30 → 65/70, 숏 65/70 → 40/35</td><td>-14.29%</td><td>4.38%</td><td>8.53%</td><td>-1.09%</td><td>102</td></tr><tr><td>15</td><td>장세 필터 롱·숏</td><td>롱 45/40 → 70/75, 숏 65/70 → 35/30</td><td>-7.86%</td><td>3.96%</td><td>13.05%</td><td>-0.66%</td><td>78</td></tr><tr><td>16</td><td>장세 필터 롱·숏</td><td>롱 40/35 → 60/65, 숏 60/65 → 35/30</td><td>-22.51%</td><td>3.64%</td><td>12.61%</td><td>-3.33%</td><td>109</td></tr><tr><td>17</td><td>장세 필터 롱·숏</td><td>롱 45/40 → 65/70, 숏 65/70 → 35/30</td><td>-13.88%</td><td>2.95%</td><td>12.44%</td><td>-2.29%</td><td>84</td></tr><tr><td>18</td><td>장세 필터 롱·숏</td><td>롱 40/35 → 70/75, 숏 65/70 → 40/35</td><td>-10.33%</td><td>2.80%</td><td>11.78%</td><td>-2.62%</td><td>100</td></tr><tr><td>19</td><td>장세 필터 롱·숏</td><td>롱 35/30 → 60/65, 숏 65/70 → 40/35</td><td>-16.58%</td><td>2.34%</td><td>9.31%</td><td>-3.52%</td><td>114</td></tr><tr><td>20</td><td>장세 필터 롱·숏</td><td>롱 40/35 → 60/65, 숏 65/70 → 35/30</td><td>-16.78%</td><td>2.16%</td><td>11.96%</td><td>-3.57%</td><td>99</td></tr></tbody>
+    </table>
+  </section>
+</body>
+</html>

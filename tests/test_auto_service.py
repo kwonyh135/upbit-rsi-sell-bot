@@ -44,6 +44,23 @@ def test_intrabar_backtest_parser_defaults():
     assert args.days == 90
 
 
+def test_bitget_btc_rsi_optimizer_parser_accepts_cached_inputs():
+    args = build_parser().parse_args([
+        "optimize-bitget-btc-rsi",
+        "--months",
+        "6",
+        "--candles",
+        "candles.csv",
+        "--funding",
+        "funding.csv",
+    ])
+
+    assert args.command == "optimize-bitget-btc-rsi"
+    assert args.months == 6
+    assert args.candles == "candles.csv"
+    assert args.funding == "funding.csv"
+
+
 def test_intrabar_default_download_uses_public_client_window_and_snapshot(monkeypatch):
     now = datetime.now(timezone.utc)
     seconds = [

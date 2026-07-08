@@ -37,6 +37,7 @@ class FuturesConfig:
     fee_rate: Decimal = Decimal("0.0006")
     slippage: Decimal = Decimal("0.0002")
     rsi_period: int = 14
+    thresholds: object | None = None
 
 
 @dataclass(frozen=True)
@@ -234,35 +235,55 @@ def classify_regimes(candles: list[Candle]) -> dict[datetime, Regime]:
     return regimes
 
 
-def desired_target(kind: StrategyKind, exposure: Decimal, rsi_value: float, regime: Regime) -> Decimal:
+def _threshold_value(thresholds: object | None, name: str, default: float | None) -> float | None:
+    if thresholds is None:
+        return default
+    return getattr(thresholds, name)
+
+
+def desired_target(
+    kind: StrategyKind,
+    exposure: Decimal,
+    rsi_value: float,
+    regime: Regime,
+    thresholds: object | None = None,
+) -> Decimal:
     if kind == StrategyKind.CASH:
         return Decimal("0")
     if kind == StrategyKind.BUY_AND_HOLD:
         return Decimal("1")
+    long_entry_1 = _threshold_value(thresholds, "long_entry_1", 45)
+    long_entry_2 = _threshold_value(thresholds, "long_entry_2", 40)
+    long_exit_1 = _threshold_value(thresholds, "long_exit_1", 60)
+    long_exit_2 = _threshold_value(thresholds, "long_exit_2", 65)
+    short_entry_1 = _threshold_value(thresholds, "short_entry_1", 60)
+    short_entry_2 = _threshold_value(thresholds, "short_entry_2", 65)
+    short_exit_1 = _threshold_value(thresholds, "short_exit_1", 45)
+    short_exit_2 = _threshold_value(thresholds, "short_exit_2", 40)
     allow_long = kind in {StrategyKind.LONG_ONLY, StrategyKind.BIDIRECTIONAL}
     allow_short = kind in {StrategyKind.SHORT_ONLY, StrategyKind.BIDIRECTIONAL}
     if kind == StrategyKind.REGIME_FILTERED:
         allow_long = regime == Regime.BULL
         allow_short = regime == Regime.BEAR
     if exposure > 0:
-        if rsi_value >= 65:
+        if long_exit_2 is not None and rsi_value >= long_exit_2:
             return Decimal("0")
-        if rsi_value >= 60:
+        if long_exit_1 is not None and rsi_value >= long_exit_1:
             return min(exposure, Decimal("0.5"))
-        if rsi_value <= 40:
+        if long_entry_2 is not None and rsi_value <= long_entry_2:
             return Decimal("1")
         return exposure
     if exposure < 0:
-        if rsi_value <= 40:
+        if short_exit_2 is not None and rsi_value <= short_exit_2:
             return Decimal("0")
-        if rsi_value <= 45:
+        if short_exit_1 is not None and rsi_value <= short_exit_1:
             return max(exposure, Decimal("-0.5"))
-        if rsi_value >= 65:
+        if short_entry_2 is not None and rsi_value >= short_entry_2:
             return Decimal("-1")
         return exposure
-    if rsi_value <= 45 and allow_long:
+    if long_entry_1 is not None and rsi_value <= long_entry_1 and allow_long:
         return Decimal("0.5")
-    if rsi_value >= 60 and allow_short:
+    if short_entry_1 is not None and rsi_value >= short_entry_1 and allow_short:
         return Decimal("-0.5")
     return Decimal("0")
 
@@ -366,7 +387,7 @@ def run_futures_backtest(
         if config.kind == StrategyKind.BUY_AND_HOLD and index == 0 and index + 1 < len(ordered):
             pending_target = Decimal("1")
         elif value is not None and index + 1 < len(ordered):
-            desired = desired_target(config.kind, target_exposure, value, regime)
+            desired = desired_target(config.kind, target_exposure, value, regime, config.thresholds)
             if desired != target_exposure:
                 pending_target = desired
 

@@ -240,6 +240,7 @@ Run the research-only six-month BTCUSDT perpetual-futures comparison:
 
 ```powershell
 .\.venv\Scripts\python.exe -m huntbot backtest-bitget-btc --months 6
+.\.venv\Scripts\python.exe -m huntbot optimize-bitget-btc-rsi --months 6
 ```
 
 This compares cash, BTC 1x buy-and-hold, long-only, short-only,
@@ -247,6 +248,13 @@ bidirectional, and regime-filtered bidirectional RSI strategies. It uses
 public Bitget data, 1x exposure, taker fees, adverse slippage, and historical
 funding. It does not load API secrets, place orders, modify the HUNT bot, or
 deploy to AWS.
+
+The RSI optimizer searches long-only, bidirectional, and regime-filtered RSI
+threshold combinations, then writes:
+
+- `docs/bitget-btc-rsi-optimization-latest.md`
+- `docs/bitget-btc-rsi-optimization-latest.html`
+- `data/backtests/bitget-btc-rsi-optimization-latest.json`
 
 ## AWS EC2 Ubuntu
 
