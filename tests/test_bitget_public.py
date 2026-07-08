@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from huntbot.__main__ import build_parser
+
 
 def _bitget():
     import importlib
@@ -133,12 +135,10 @@ def test_download_history_fetches_multiple_pages_with_strict_candle_cursor_and_p
     assert len(client.funding_calls) == 2
     assert [call["endTime"] for call in client.candle_calls] == [
         int(end.timestamp() * 1000),
-        int((datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc) - timedelta(milliseconds=1)).timestamp() * 1000),
-    ]
-    assert [call["endTime"] for call in client.funding_calls] == [
-        int(end.timestamp() * 1000),
         int(datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc).timestamp() * 1000),
     ]
+    assert [call["pageNo"] for call in client.funding_calls] == [1, 2]
+    assert all(call["pageSize"] == 100 for call in client.funding_calls)
     assert client.candle_pages == []
     assert client.funding_pages == []
     assert candle_snapshot.exists()
@@ -190,3 +190,9 @@ def test_get_json_raises_runtime_error_for_bitget_code():
 
     with pytest.raises(RuntimeError, match="Bitget API error: 40000 bad request"):
         client.get_json("/api/v2/mix/market/history-candles", {"symbol": "BTCUSDT"})
+
+
+def test_parser_accepts_bitget_btc_research_command():
+    args = build_parser().parse_args(["backtest-bitget-btc", "--months", "6"])
+    assert args.command == "backtest-bitget-btc"
+    assert args.months == 6

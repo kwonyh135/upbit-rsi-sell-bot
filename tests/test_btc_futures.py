@@ -198,3 +198,22 @@ def test_direct_reversal_closes_first_and_waits_for_later_signal():
     btc = _btc()
     assert btc._guard_reversal(Decimal("0.5"), Decimal("-0.5")) == Decimal("0")
     assert btc._guard_reversal(Decimal("0"), Decimal("-0.5")) == Decimal("-0.5")
+
+
+def test_buy_and_hold_does_not_rebalance_on_every_candle():
+    btc = _btc()
+    candles = [candle_at(i * 5, close=str(100 + i)) for i in range(30)]
+    result = btc.run_futures_backtest(candles, [], {}, btc.FuturesConfig(btc.StrategyKind.BUY_AND_HOLD))
+    assert len(result.trades) == 2
+    assert result.trades[0].target_exposure == Decimal("1")
+    assert result.trades[-1].reason == "end_of_test"
+
+
+def test_unchanged_rsi_target_does_not_create_micro_rebalances():
+    btc = _btc()
+    candles = [candle_at(i * 5, close=str(100 + i)) for i in range(8)]
+    rsi_values = {item.timestamp: 44.0 for item in candles[:-1]}
+    result = btc.run_futures_backtest(
+        candles, [], {}, btc.FuturesConfig(btc.StrategyKind.LONG_ONLY), rsi_values=rsi_values
+    )
+    assert len(result.trades) == 2

@@ -129,15 +129,15 @@ def _download_candle_page(
 def _download_funding_page(
     client: BitgetPublicClient,
     *,
-    cursor: datetime,
+    page_no: int,
 ) -> list[FundingSettlement]:
     payload = client.get_json(
         "/api/v2/mix/market/history-fund-rate",
         {
             "symbol": "BTCUSDT",
             "productType": "usdt-futures",
-            "limit": 100,
-            "endTime": int(cursor.timestamp() * 1000),
+            "pageSize": 100,
+            "pageNo": page_no,
         },
     )
     return [parse_funding_settlement(row) for row in (payload.get("data") or [])]
@@ -182,23 +182,28 @@ def download_history(
         for item in page:
             if start <= item.timestamp < end:
                 candle_map[item.timestamp] = item
-        candle_cursor = page_oldest - timedelta(milliseconds=1)
+        # Bitget treats endTime as an exclusive, five-minute-aligned boundary.
+        candle_cursor = page_oldest
         save_candle_snapshot([candle_map[key] for key in sorted(candle_map)], candle_snapshot_path)
         sleep(0.12)
 
-    funding_cursor = end
-    while funding_cursor > start:
-        page = _download_funding_page(client, cursor=funding_cursor)
+    funding_page_no = 1
+    previous_oldest: datetime | None = None
+    while True:
+        page = _download_funding_page(client, page_no=funding_page_no)
         if not page:
             break
         page_oldest = min(item.timestamp for item in page)
-        if page_oldest >= funding_cursor:
+        if previous_oldest is not None and page_oldest >= previous_oldest:
             raise RuntimeError("funding pagination loop")
         for item in page:
             if start <= item.timestamp < end:
                 funding_map[item.timestamp] = item
-        funding_cursor = page_oldest
+        previous_oldest = page_oldest
         save_funding_snapshot([funding_map[key] for key in sorted(funding_map)], funding_snapshot_path)
+        if page_oldest <= start:
+            break
+        funding_page_no += 1
         sleep(0.12)
 
     candles = [candle_map[key] for key in sorted(candle_map)]

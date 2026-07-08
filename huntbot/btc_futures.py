@@ -311,6 +311,7 @@ def run_futures_backtest(
     curve: list[EquityPoint] = []
     fee_cost = slippage_cost = funding_pnl = turnover = Decimal("0")
     pending_target: Decimal | None = None
+    target_exposure = Decimal("0")
     cycle_opened: datetime | None = None
     cycle_start_equity = config.initial_equity
     cycle_direction = ""
@@ -355,6 +356,7 @@ def run_futures_backtest(
                     else:
                         short_pnl += pnl
                     cycle_opened = None
+            target_exposure = target
             pending_target = None
 
         close_equity = cash + quantity * candle.close
@@ -364,7 +366,9 @@ def run_futures_backtest(
         if config.kind == StrategyKind.BUY_AND_HOLD and index == 0 and index + 1 < len(ordered):
             pending_target = Decimal("1")
         elif value is not None and index + 1 < len(ordered):
-            pending_target = desired_target(config.kind, curve[-1].exposure, value, regime)
+            desired = desired_target(config.kind, target_exposure, value, regime)
+            if desired != target_exposure:
+                pending_target = desired
 
     if quantity:
         final = ordered[-1]
