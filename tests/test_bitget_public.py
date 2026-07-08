@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -52,26 +52,29 @@ def test_funding_snapshot_round_trip_dedupes_and_sorts(tmp_path):
     assert bitget.load_funding_snapshot(path) == [earlier, later]
 
 
-def test_download_history_fetches_pages_and_persists_both_snapshots(tmp_path):
+def test_download_history_fetches_multiple_pages_with_strict_candle_cursor_and_persists_snapshots(tmp_path):
     bitget = _bitget()
     candle_snapshot = tmp_path / "candles.csv"
     funding_snapshot = tmp_path / "funding.csv"
 
     class FakeClient:
         def __init__(self):
-            self.calls = []
+            self.candle_calls = []
+            self.funding_calls = []
             self.candle_pages = [
                 {
                     "code": "00000",
                     "data": [
-                        ["1767225900000", "90050", "90150", "90000", "90075", "9.0", "1"],
-                        ["1767225600000", "90000", "90100", "89900", "90050", "12.5", "1"],
+                        ["1767226200000", "90050", "90150", "90000", "90075", "9.0", "1"],
+                        ["1767225900000", "90025", "90080", "90000", "90050", "11.0", "1"],
+                        ["1767225600000", "90000", "90025", "89950", "90010", "12.5", "1"],
                     ],
                 },
                 {
                     "code": "00000",
                     "data": [
-                        ["1767225600000", "90000", "90100", "89900", "90050", "12.5", "1"],
+                        ["1767225300000", "89975", "90010", "89950", "89990", "8.0", "1"],
+                        ["1767225000000", "89950", "89990", "89910", "89960", "7.5", "1"],
                     ],
                 },
             ]
@@ -79,37 +82,65 @@ def test_download_history_fetches_pages_and_persists_both_snapshots(tmp_path):
                 {
                     "code": "00000",
                     "data": [
-                        {"fundingRate": "0.0001", "fundingTime": "1767225900000"},
-                        {"fundingRate": "0.0000", "fundingTime": "1767225600000"},
+                        {"fundingRate": "0.0002", "fundingTime": "1767226080000"},
+                        {"fundingRate": "0.0001", "fundingTime": "1767225600000"},
                     ],
                 },
                 {
                     "code": "00000",
                     "data": [
-                        {"fundingRate": "0.0000", "fundingTime": "1767225600000"},
+                        {"fundingRate": "0.0000", "fundingTime": "1767225300000"},
+                        {"fundingRate": "-0.0001", "fundingTime": "1767225000000"},
                     ],
                 },
             ]
 
         def get_json(self, path: str, params: dict) -> dict:
-            self.calls.append((path, params))
             if path.endswith("history-candles"):
+                self.candle_calls.append(params)
                 return self.candle_pages.pop(0)
             if path.endswith("history-fund-rate"):
+                self.funding_calls.append(params)
                 return self.funding_pages.pop(0)
             raise AssertionError(f"unexpected path: {path}")
 
+    client = FakeClient()
+    end = datetime(2026, 1, 1, 0, 10, tzinfo=timezone.utc)
+    start = datetime(2025, 12, 31, 23, 50, tzinfo=timezone.utc)
+
     candles, funding = bitget.download_history(
-        FakeClient(),
-        start=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        end=datetime(2026, 1, 1, 0, 10, tzinfo=timezone.utc),
+        client,
+        start=start,
+        end=end,
         candle_snapshot_path=candle_snapshot,
         funding_snapshot_path=funding_snapshot,
         sleep=lambda _: None,
     )
 
-    assert [item.close for item in candles] == [Decimal("90050"), Decimal("90075")]
-    assert [item.rate for item in funding] == [Decimal("0.0000"), Decimal("0.0001")]
+    assert [item.close for item in candles] == [
+        Decimal("89960"),
+        Decimal("89990"),
+        Decimal("90010"),
+        Decimal("90050"),
+    ]
+    assert [item.rate for item in funding] == [
+        Decimal("-0.0001"),
+        Decimal("0.0000"),
+        Decimal("0.0001"),
+        Decimal("0.0002"),
+    ]
+    assert len(client.candle_calls) == 2
+    assert len(client.funding_calls) == 2
+    assert [call["endTime"] for call in client.candle_calls] == [
+        int(end.timestamp() * 1000),
+        int((datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc) - timedelta(milliseconds=1)).timestamp() * 1000),
+    ]
+    assert [call["endTime"] for call in client.funding_calls] == [
+        int(end.timestamp() * 1000),
+        int(datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc).timestamp() * 1000),
+    ]
+    assert client.candle_pages == []
+    assert client.funding_pages == []
     assert candle_snapshot.exists()
     assert funding_snapshot.exists()
     assert bitget.load_candle_snapshot(candle_snapshot)[0].market == "BTCUSDT"

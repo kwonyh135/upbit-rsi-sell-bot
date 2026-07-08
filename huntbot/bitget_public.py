@@ -182,7 +182,7 @@ def download_history(
         for item in page:
             if start <= item.timestamp < end:
                 candle_map[item.timestamp] = item
-        candle_cursor = page_oldest
+        candle_cursor = page_oldest - timedelta(milliseconds=1)
         save_candle_snapshot([candle_map[key] for key in sorted(candle_map)], candle_snapshot_path)
         sleep(0.12)
 
