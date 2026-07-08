@@ -69,6 +69,28 @@ def test_validate_candles_deduplicates_identical_duplicates_and_counts_warmup_ga
     assert missing_intervals == 1
 
 
+def test_validate_candles_normalizes_kst_timestamps_and_aligns_buckets_to_utc():
+    btc = _btc()
+    kst = timezone(timedelta(hours=9))
+    base = datetime(2026, 1, 1, 8, 0, tzinfo=kst)
+    candles = [
+        candle_at(offset * 5, close="100" if offset < 60 else "200", base=base)
+        for offset in range(144)
+    ]
+
+    validated, missing_intervals = btc.validate_candles(
+        candles,
+        base.astimezone(timezone.utc),
+        base.astimezone(timezone.utc) + timedelta(hours=12),
+    )
+    regimes = btc.classify_regimes(candles)
+
+    assert validated[0].timestamp.tzinfo == timezone.utc
+    assert missing_intervals == 0
+    assert regimes[candles[96].timestamp.astimezone(timezone.utc)] == btc.Regime.NEUTRAL
+    assert regimes[candles[108].timestamp.astimezone(timezone.utc)] == btc.Regime.BULL
+
+
 def test_validate_candles_rejects_conflicting_duplicate():
     btc = _btc()
     candles = [candle_at(0, close="100"), candle_at(0, close="101")]
@@ -87,6 +109,23 @@ def test_validate_candles_rejects_missing_required_interval():
 
     with pytest.raises(ValueError, match="missing 1 required five-minute interval"):
         btc.validate_candles(candles, START, END)
+
+
+def test_validate_candles_deduplicates_volume_only_duplicate_rows():
+    btc = _btc()
+    candles = [
+        candle_at(0, close="100", volume="1"),
+        candle_at(0, close="100", volume="2"),
+        candle_at(5, close="101", volume="3"),
+    ]
+
+    validated, missing_intervals = btc.validate_candles(candles, START, START + timedelta(minutes=10))
+
+    assert [item.timestamp for item in validated] == [
+        START,
+        START + timedelta(minutes=5),
+    ]
+    assert missing_intervals == 0
 
 
 def test_regime_is_not_visible_until_four_hour_bar_closes():

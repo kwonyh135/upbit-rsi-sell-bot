@@ -25,15 +25,13 @@ def _as_utc(value: datetime) -> datetime:
 
 
 def _normalize_candle(candle: Candle) -> Candle:
-    timestamp = _as_utc(candle.timestamp)
     if candle.unit != 5:
         raise ValueError("expected five-minute candles")
     if candle.market != "BTCUSDT":
         raise ValueError("expected BTCUSDT candles")
+    timestamp = _as_utc(candle.timestamp)
     if timestamp.second or timestamp.microsecond or timestamp.minute % 5:
         raise ValueError("candle timestamps must align to five-minute boundaries")
-    if timestamp == candle.timestamp:
-        return candle
     return Candle(
         market=candle.market,
         unit=candle.unit,
@@ -87,7 +85,12 @@ def validate_candles(candles: list[Candle], start: datetime, end: datetime) -> t
         if existing is None:
             unique[candle.timestamp] = candle
             continue
-        if existing != candle:
+        if (
+            existing.open != candle.open
+            or existing.high != candle.high
+            or existing.low != candle.low
+            or existing.close != candle.close
+        ):
             raise ValueError(f"conflicting duplicate candle at {candle.timestamp.isoformat()}")
 
     validated = [unique[key] for key in sorted(unique)]
