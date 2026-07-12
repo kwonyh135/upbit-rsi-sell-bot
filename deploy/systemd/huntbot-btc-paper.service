@@ -1,0 +1,18 @@
+[Unit]
+Description=Bitget BTCUSDT paper trading cycle
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=huntbot
+Group=huntbot
+WorkingDirectory=/opt/huntbot/app
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/huntbot/venv/bin/python -m huntbot run-bitget-btc-paper --once --lookback 40 --initial-equity 3000
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/huntbot/shared

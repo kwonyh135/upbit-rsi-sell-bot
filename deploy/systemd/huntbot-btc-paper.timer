@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Bitget BTCUSDT paper trading hourly
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+Persistent=true
+Unit=huntbot-btc-paper.service
+
+[Install]
+WantedBy=timers.target

@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -59,6 +60,70 @@ def test_bitget_btc_rsi_optimizer_parser_accepts_cached_inputs():
     assert args.months == 6
     assert args.candles == "candles.csv"
     assert args.funding == "funding.csv"
+
+
+def test_bitget_btc_trend_walkforward_parser_accepts_cached_inputs():
+    args = build_parser().parse_args([
+        "walkforward-bitget-btc-trend",
+        "--candles",
+        "candles.csv",
+        "--funding",
+        "funding.csv",
+        "--train-months",
+        "6",
+        "--test-months",
+        "3",
+    ])
+
+    assert args.command == "walkforward-bitget-btc-trend"
+    assert args.candles == "candles.csv"
+    assert args.funding == "funding.csv"
+    assert args.train_months == 6
+    assert args.test_months == 3
+
+
+def test_bitget_btc_paper_parser_accepts_once_and_lookback():
+    args = build_parser().parse_args([
+        "run-bitget-btc-paper",
+        "--once",
+        "--lookback",
+        "40",
+        "--initial-equity",
+        "3000",
+    ])
+
+    assert args.command == "run-bitget-btc-paper"
+    assert args.once is True
+    assert args.lookback == 40
+    assert args.initial_equity == "3000"
+
+
+def test_bitget_btc_paper_command_uses_public_candles_without_live_orders(monkeypatch, tmp_path):
+    class Result:
+        action = "open_long"
+        price = Decimal("100")
+        equity = Decimal("1001")
+        return_pct = Decimal("0.1")
+        max_drawdown_pct = Decimal("0")
+        signal_timestamp = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        target_position = "long"
+        state = SimpleNamespace(position="long")
+
+    captured = {}
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(huntbot_main, "BitgetPublicClient", lambda: object())
+    monkeypatch.setattr(huntbot_main, "download_recent_contract_candles", lambda client, count: ["candle"])
+    monkeypatch.setattr(huntbot_main, "load_paper_state", lambda: "state")
+    def run_cycle(candles, state, config):
+        captured["config"] = config
+        return Result()
+
+    monkeypatch.setattr(huntbot_main, "run_paper_cycle", run_cycle)
+    monkeypatch.setattr(huntbot_main, "append_paper_log", lambda result: captured.setdefault("logged", result))
+
+    assert huntbot_main.run_bitget_btc_paper_command(once=True, lookback=40, initial_equity=Decimal("3000")) == 0
+    assert captured["config"].lookback == 40
+    assert captured["logged"].action == "open_long"
 
 
 def test_intrabar_default_download_uses_public_client_window_and_snapshot(monkeypatch):

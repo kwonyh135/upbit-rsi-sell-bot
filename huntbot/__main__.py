@@ -6,12 +6,15 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from huntbot.backtest import run_buyback_candidate_search, run_candidate_search, run_split_buyback_backtest, run_split_buyback_candidate_search
-from huntbot.bitget_public import BitgetPublicClient, complete_month_window, download_history, load_funding_snapshot
+from huntbot.bitget_paper_trader import PaperConfig, append_paper_log, load_paper_state, run_paper_cycle
+from huntbot.bitget_public import BitgetPublicClient, complete_month_window, download_history, download_recent_contract_candles, load_funding_snapshot
 from huntbot.btc_futures import validate_candles
 from huntbot.btc_futures_reporting import render_btc_html, render_btc_markdown
 from huntbot.btc_futures_study import run_btc_futures_study, study_to_json as btc_study_to_json
 from huntbot.btc_rsi_optimization import optimize_btc_rsi, optimization_to_json
 from huntbot.btc_rsi_optimization_reporting import render_optimization_html, render_optimization_markdown
+from huntbot.btc_trend_walkforward import run_walkforward_study, walkforward_to_json
+from huntbot.btc_trend_walkforward_reporting import render_walkforward_html, render_walkforward_markdown
 from huntbot.crash_backtest import run_crash_study
 from huntbot.crash_reporting import render_crash_study_markdown, study_to_json
 from huntbot.auto_service import SingleInstanceLock, run_auto_service, unlock_emergency
@@ -61,6 +64,19 @@ def build_parser() -> argparse.ArgumentParser:
     btc_optimize.add_argument("--months", type=int, choices=[6], default=6)
     btc_optimize.add_argument("--candles")
     btc_optimize.add_argument("--funding")
+    btc_walkforward = subparsers.add_parser("walkforward-bitget-btc-trend")
+    btc_walkforward.add_argument("--candles")
+    btc_walkforward.add_argument("--funding")
+    btc_walkforward.add_argument("--train-months", type=int, default=6)
+    btc_walkforward.add_argument("--test-months", type=int, default=3)
+    btc_paper = subparsers.add_parser("run-bitget-btc-paper")
+    paper_mode = btc_paper.add_mutually_exclusive_group(required=True)
+    paper_mode.add_argument("--once", action="store_true")
+    paper_mode.add_argument("--loop", action="store_true")
+    btc_paper.add_argument("--lookback", type=int, default=40)
+    btc_paper.add_argument("--initial-equity", default="3000")
+    btc_paper.add_argument("--poll-seconds", type=int, default=300)
+    btc_paper.add_argument("--candles")
     subparsers.add_parser("sync-buyback-state")
     run_auto = subparsers.add_parser("run-auto-5m")
     auto_mode = run_auto.add_mutually_exclusive_group(required=True)
@@ -95,6 +111,21 @@ def main() -> int:
         return run_bitget_btc_command(candle_path=args.candles, funding_path=args.funding)
     if args.command == "optimize-bitget-btc-rsi":
         return run_bitget_btc_rsi_optimize_command(candle_path=args.candles, funding_path=args.funding)
+    if args.command == "walkforward-bitget-btc-trend":
+        return run_bitget_btc_trend_walkforward_command(
+            candle_path=args.candles,
+            funding_path=args.funding,
+            train_months=args.train_months,
+            test_months=args.test_months,
+        )
+    if args.command == "run-bitget-btc-paper":
+        return run_bitget_btc_paper_command(
+            once=args.once,
+            lookback=args.lookback,
+            initial_equity=Decimal(args.initial_equity),
+            poll_seconds=args.poll_seconds,
+            candle_path=args.candles,
+        )
     load_environment()
     if args.command == "backtest":
         return run_backtest_command()
@@ -247,6 +278,88 @@ def run_bitget_btc_rsi_optimize_command(*, candle_path: str | None, funding_path
         f"holdout_return={study.selected.holdout.result.return_pct:.2f}%"
     )
     return 0
+
+
+def run_bitget_btc_trend_walkforward_command(
+    *,
+    candle_path: str | None,
+    funding_path: str | None,
+    train_months: int,
+    test_months: int,
+) -> int:
+    if bool(candle_path) != bool(funding_path):
+        raise ValueError("--candles and --funding must be supplied together")
+    now = datetime.now(timezone.utc)
+    snapshot_candles = Path(candle_path or "data/backtests/bitget-btcusdt-5m-2y-plus-warmup.csv")
+    snapshot_funding = Path(funding_path or "data/backtests/bitget-btcusdt-funding-2y-plus-warmup.csv")
+    candles = load_candle_snapshot(snapshot_candles)
+    funding = load_funding_snapshot(snapshot_funding)
+    start = datetime(2024, 7, 1, tzinfo=timezone.utc)
+    end = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    validated, warmup_missing = validate_candles(candles, start, end)
+    test_candles = [item for item in validated if start <= item.timestamp < end]
+    test_funding = [item for item in funding if start <= item.timestamp < end]
+    study = run_walkforward_study(validated, funding, start, end, train_months=train_months, test_months=test_months)
+    metadata = {
+        "market": "BTCUSDT",
+        "first_candle": test_candles[0].timestamp.isoformat(),
+        "last_candle": test_candles[-1].timestamp.isoformat(),
+        "candle_count": len(test_candles),
+        "warmup_missing_intervals": warmup_missing,
+        "funding_count": len(test_funding),
+        "funding_first": test_funding[0].timestamp.isoformat() if test_funding else None,
+        "funding_last": test_funding[-1].timestamp.isoformat() if test_funding else None,
+        "funding_coverage_complete": bool(test_funding and test_funding[0].timestamp <= start),
+        "generated_at": now.isoformat(),
+        "candles": str(snapshot_candles),
+        "funding": str(snapshot_funding),
+    }
+    result_path = Path("data/backtests/bitget-btc-trend-walkforward.json")
+    markdown_path = Path("docs/bitget-btc-trend-walkforward.md")
+    html_path = Path("docs/bitget-btc-trend-walkforward.html")
+    _atomic_write(result_path, walkforward_to_json(study, metadata))
+    _atomic_write(markdown_path, render_walkforward_markdown(study, metadata))
+    _atomic_write(html_path, render_walkforward_html(study, metadata))
+    print(f"Coverage: {metadata['first_candle']} to {metadata['last_candle']} ({len(test_candles)} candles)")
+    print(f"Folds: {len(study.folds)}; train_months={train_months}; test_months={test_months}")
+    print(f"Results: {result_path}")
+    print(f"Markdown: {markdown_path}")
+    print(f"HTML: {html_path}")
+    print(
+        f"Conclusion: {study.conclusion}; "
+        f"oos={study.selected_summary.compounded_return_pct:.2f}%; "
+        f"stress={study.selected_summary.stress_compounded_return_pct:.2f}%"
+    )
+    return 0
+
+
+def run_bitget_btc_paper_command(
+    *,
+    once: bool,
+    lookback: int,
+    initial_equity: Decimal,
+    poll_seconds: int = 300,
+    candle_path: str | None = None,
+) -> int:
+    if poll_seconds <= 0:
+        raise ValueError("--poll-seconds must be positive")
+    config = PaperConfig(lookback=lookback, initial_equity=initial_equity)
+    candle_count = max((lookback + 2) * 48, 500)
+    while True:
+        if candle_path:
+            candles = load_candle_snapshot(Path(candle_path))[-candle_count:]
+        else:
+            candles = download_recent_contract_candles(BitgetPublicClient(), count=candle_count)
+        result = run_paper_cycle(candles, load_paper_state(), config)
+        append_paper_log(result)
+        print(
+            f"mode=paper market=BTCUSDT position={result.state.position} action={result.action} "
+            f"price={result.price} equity={result.equity:.4f} return_pct={result.return_pct:.4f} "
+            f"mdd={result.max_drawdown_pct:.4f} signal={result.signal_timestamp}"
+        )
+        if once:
+            return 0
+        time.sleep(poll_seconds)
 
 
 def run_backtest_command() -> int:

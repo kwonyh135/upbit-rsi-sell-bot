@@ -126,6 +126,31 @@ def _download_candle_page(
     return [parse_contract_candle(row) for row in (payload.get("data") or [])]
 
 
+def download_recent_contract_candles(
+    client: BitgetPublicClient,
+    *,
+    count: int,
+    end: datetime | None = None,
+    sleep=time.sleep,
+) -> list[Candle]:
+    if count <= 0:
+        raise ValueError("count must be positive")
+    cursor = _as_utc(end or datetime.now(timezone.utc))
+    candles: dict[datetime, Candle] = {}
+    while len(candles) < count:
+        page = _download_candle_page(client, cursor=cursor)
+        if not page:
+            break
+        oldest = min(item.timestamp for item in page)
+        if oldest >= cursor:
+            raise RuntimeError("candle pagination loop")
+        for item in page:
+            candles[item.timestamp] = item
+        cursor = oldest
+        sleep(0.12)
+    return [candles[key] for key in sorted(candles)][-count:]
+
+
 def _download_funding_page(
     client: BitgetPublicClient,
     *,

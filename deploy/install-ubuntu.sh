@@ -7,6 +7,8 @@ VENV_DIR="$INSTALL_ROOT/venv"
 SHARED_DIR="$INSTALL_ROOT/shared"
 SERVICE_NAME="huntbot-auto.service"
 SERVICE_SOURCE="deploy/systemd/$SERVICE_NAME"
+BTC_PAPER_SERVICE_NAME="huntbot-btc-paper.service"
+BTC_PAPER_TIMER_NAME="huntbot-btc-paper.timer"
 SOURCE_DIR="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 if [[ "${EUID}" -ne 0 ]]; then
@@ -61,6 +63,12 @@ fi
 install -o root -g root -m 0644 \
   "$APP_DIR/$SERVICE_SOURCE" \
   "/etc/systemd/system/$SERVICE_NAME"
+install -o root -g root -m 0644 \
+  "$APP_DIR/deploy/systemd/$BTC_PAPER_SERVICE_NAME" \
+  "/etc/systemd/system/$BTC_PAPER_SERVICE_NAME"
+install -o root -g root -m 0644 \
+  "$APP_DIR/deploy/systemd/$BTC_PAPER_TIMER_NAME" \
+  "/etc/systemd/system/$BTC_PAPER_TIMER_NAME"
 systemctl daemon-reload
 
 chown -R huntbot:huntbot "$APP_DIR" "$VENV_DIR" "$SHARED_DIR"
