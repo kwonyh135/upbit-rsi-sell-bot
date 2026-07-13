@@ -140,10 +140,34 @@ def test_buy_2_phase_sells_half_when_rsi_reaches_first_sell_threshold():
     assert action.next_phase == "sell_2"
 
 
+def test_approved_candidate_uses_sell_thresholds_56_and_61():
+    common = {
+        "state": AutoTradeState(phase="sell_1"),
+        "candle_timestamp": "c3",
+        "emergency_confirmed": False,
+        "emergency_reason": None,
+        "hunt_balance": Decimal("1200"),
+        "krw_balance": Decimal("0"),
+        "bid_fee": Decimal("0.0005"),
+    }
+
+    assert select_auto_action(rsi_value=55.9, **common) is None
+
+    first_sell = select_auto_action(rsi_value=56, **common)
+    assert first_sell is not None
+    assert first_sell.action == "sell_1"
+    assert first_sell.requested_amount == Decimal("600")
+
+    second_sell = select_auto_action(rsi_value=61, **common)
+    assert second_sell is not None
+    assert second_sell.action == "sell_2"
+    assert second_sell.requested_amount == Decimal("1200")
+
+
 def test_sell_2_phase_does_not_repeat_first_sell_below_second_threshold():
     action = select_auto_action(
         state=AutoTradeState(phase="sell_2"),
-        rsi_value=62,
+        rsi_value=60.9,
         candle_timestamp="c4",
         emergency_confirmed=False,
         emergency_reason=None,
@@ -226,7 +250,7 @@ def test_buy_1_phase_still_uses_first_buy_when_rsi_is_below_second_threshold():
 def test_any_phase_uses_second_sell_when_rsi_reaches_second_sell_threshold():
     action = select_auto_action(
         state=AutoTradeState(phase="buy_1"),
-        rsi_value=65,
+        rsi_value=61,
         candle_timestamp="c5",
         emergency_confirmed=False,
         emergency_reason=None,
@@ -358,7 +382,7 @@ class FakeCycleClient(FakeOrderClient):
         return {
             "market": market,
             "timestamp": int(self.now.timestamp() * 1000),
-            "orderbook_units": [{"bid_price": 100, "ask_price": 101}],
+            "orderbook_units": [{"bid_price": 115, "ask_price": 116}],
         }
 
     def get_minute_candles(self, market, *, unit, count=200, to=None):
@@ -409,23 +433,86 @@ def _raw_candle(timestamp, price, high=None):
     }
 
 
-def test_auto_cycle_confirms_crash_before_rsi_and_dry_run_never_orders(tmp_path):
+def test_floor_price_114_submits_full_emergency_sell_before_rsi_work(tmp_path):
     path = tmp_path / "auto.json"
-    save_auto_state(AutoTradeState(phase="buy_2", emergency_confirmations=1), path)
     client = FakeCycleClient()
+    client.get_orderbook = lambda market, count=1: {
+        "market": market,
+        "timestamp": int(client.now.timestamp() * 1000),
+        "orderbook_units": [{"bid_price": 114, "ask_price": 115}],
+    }
 
     result = run_auto_cycle(
         client=client,
         notifier=FakeNotifier(),
         state_path=path,
-        live=False,
+        live=True,
         now=client.now,
     )
 
     assert result.action == "emergency_sell"
-    assert result.status == "dry_run"
+    assert result.status == "done"
     assert result.risk_confirmed is True
+    assert result.risk_reason == "fixed_floor_114_krw"
+    assert client.orders[0][0] == "sell"
+    assert client.orders[0][2] == "1000"
+    assert load_auto_state(path).phase == "emergency_halt"
+
+
+def test_floor_price_114_without_hunt_halts_without_submitting_order(tmp_path):
+    path = tmp_path / "auto.json"
+    client = SafeSignalClient()
+    save_auto_state(
+        AutoTradeState(
+            rsi_signal_action="buy_1",
+            rsi_signal_started_at=client.now.isoformat(),
+            rsi_signal_last_seen_at=client.now.isoformat(),
+            rsi_signal_candle=client.now.isoformat(),
+        ),
+        path,
+    )
+    client.get_orderbook = lambda market, count=1: {
+        "market": market,
+        "timestamp": int(client.now.timestamp() * 1000),
+        "orderbook_units": [{"bid_price": 114, "ask_price": 115}],
+    }
+
+    result = run_auto_cycle(
+        client=client,
+        notifier=FakeNotifier(),
+        state_path=path,
+        live=True,
+        now=client.now,
+    )
+
+    assert result.action == "emergency_halt_no_position"
+    assert result.risk_confirmed is True
+    assert result.risk_reason == "fixed_floor_114_krw"
+    saved = load_auto_state(path)
+    assert saved.phase == "emergency_halt"
+    assert saved.rsi_signal_action is None
     assert client.orders == []
+
+
+def test_floor_price_115_does_not_trigger_emergency_sell(tmp_path):
+    path = tmp_path / "auto.json"
+    client = SafeSignalClient()
+    client.get_orderbook = lambda market, count=1: {
+        "market": market,
+        "timestamp": int(client.now.timestamp() * 1000),
+        "orderbook_units": [{"bid_price": 115, "ask_price": 116}],
+    }
+
+    result = run_auto_cycle(
+        client=client,
+        notifier=FakeNotifier(),
+        state_path=path,
+        live=True,
+        now=client.now,
+    )
+
+    assert result.action != "emergency_sell"
+    assert load_auto_state(path).phase != "emergency_halt"
 
 
 def test_auto_cycle_uses_best_bid_as_current_price(tmp_path):
@@ -434,7 +521,7 @@ def test_auto_cycle_uses_best_bid_as_current_price(tmp_path):
     client.get_orderbook = lambda market, count=1: {
         "market": market,
         "timestamp": int(client.now.timestamp() * 1000),
-        "orderbook_units": [{"bid_price": 99, "ask_price": 100}],
+        "orderbook_units": [{"bid_price": 116, "ask_price": 117}],
     }
 
     result = run_auto_cycle(
@@ -445,7 +532,7 @@ def test_auto_cycle_uses_best_bid_as_current_price(tmp_path):
         now=client.now,
     )
 
-    assert result.current_price == Decimal("99")
+    assert result.current_price == Decimal("116")
 
 
 def test_auto_cycle_confirms_provisional_rsi_for_thirty_seconds(tmp_path, monkeypatch):
@@ -554,37 +641,6 @@ def test_invalid_orderbook_price_clears_confirmation_without_signal(tmp_path):
     assert client.orders == []
 
 
-def test_emergency_pending_clears_rsi_confirmation(tmp_path):
-    path = tmp_path / "auto.json"
-    client = FakeCycleClient()
-    client.five_minute_rows[2] = _raw_candle(
-        client.now - timedelta(minutes=10),
-        109,
-        high=110,
-    )
-    save_auto_state(
-        AutoTradeState(
-            phase="buy_2",
-            rsi_signal_action="buy_2",
-            rsi_signal_started_at=client.now.isoformat(),
-            rsi_signal_last_seen_at=client.now.isoformat(),
-            rsi_signal_candle=client.now.isoformat(),
-        ),
-        path,
-    )
-
-    result = run_auto_cycle(
-        client=client,
-        notifier=FakeNotifier(),
-        state_path=path,
-        live=True,
-        now=client.now,
-    )
-
-    assert result.status == "emergency_pending"
-    assert load_auto_state(path).rsi_signal_action is None
-
-
 def test_below_minimum_mature_signal_is_consumed(tmp_path, monkeypatch):
     path = tmp_path / "auto.json"
     client = SafeSignalClient()
@@ -662,89 +718,6 @@ def test_mature_live_signal_submits_once_and_advances_phase(tmp_path, monkeypatc
     assert len(client.orders) == 1
 
 
-def test_first_crash_observation_blocks_normal_rsi_order(tmp_path):
-    path = tmp_path / "auto.json"
-    save_auto_state(AutoTradeState(phase="buy_2"), path)
-    client = FakeCycleClient()
-    client.five_minute_rows[2] = _raw_candle(
-        client.now - timedelta(minutes=10),
-        109,
-        high=110,
-    )
-
-    result = run_auto_cycle(
-        client=client,
-        notifier=FakeNotifier(),
-        state_path=path,
-        live=True,
-        now=client.now,
-    )
-
-    assert result.status == "emergency_pending"
-    assert result.action is None
-    assert load_auto_state(path).emergency_confirmations == 1
-    assert client.orders == []
-
-
-def test_repeated_polling_same_risky_completed_candle_stays_at_one_confirmation(tmp_path):
-    path = tmp_path / "auto.json"
-    save_auto_state(AutoTradeState(phase="buy_2"), path)
-    client = FakeCycleClient()
-    client.five_minute_rows[2] = _raw_candle(
-        client.now - timedelta(minutes=10),
-        109,
-        high=110,
-    )
-
-    first = run_auto_cycle(
-        client=client,
-        notifier=FakeNotifier(),
-        state_path=path,
-        live=True,
-        now=client.now,
-    )
-    second = run_auto_cycle(
-        client=client,
-        notifier=FakeNotifier(),
-        state_path=path,
-        live=True,
-        now=client.now,
-    )
-
-    assert first.status == "emergency_pending"
-    assert second.status == "emergency_pending"
-    assert load_auto_state(path).emergency_confirmations == 1
-    assert client.orders == []
-
-
-def test_gap_between_risky_completed_candles_does_not_confirm(tmp_path):
-    path = tmp_path / "auto.json"
-    save_auto_state(AutoTradeState(phase="buy_2"), path)
-    client = FakeCycleClient()
-    client.five_minute_rows = [
-        _raw_candle(client.now, 100, high=101),
-        _raw_candle(client.now - timedelta(minutes=5), 94, high=100),
-        _raw_candle(client.now - timedelta(minutes=15), 94, high=100),
-        *[
-            _raw_candle(client.now - timedelta(minutes=5 * index), 100)
-            for index in range(4, 21)
-        ],
-    ]
-
-    result = run_auto_cycle(
-        client=client,
-        notifier=FakeNotifier(),
-        state_path=path,
-        live=True,
-        now=client.now,
-    )
-
-    assert result.status == "emergency_pending"
-    assert result.risk_confirmed is False
-    assert load_auto_state(path).emergency_confirmations == 1
-    assert client.orders == []
-
-
 def test_emergency_halt_returns_without_repeat_notification_or_api_calls(tmp_path):
     path = tmp_path / "auto.json"
     save_auto_state(AutoTradeState(phase="emergency_halt"), path)
@@ -767,7 +740,7 @@ def test_emergency_halt_returns_without_repeat_notification_or_api_calls(tmp_pat
     assert client.orders == []
 
 
-def test_risk_data_error_resets_previous_emergency_confirmation(tmp_path):
+def test_stale_orderbook_clears_previous_emergency_metadata(tmp_path):
     path = tmp_path / "auto.json"
     save_auto_state(
         AutoTradeState(
@@ -797,26 +770,4 @@ def test_risk_data_error_resets_previous_emergency_confirmation(tmp_path):
     assert result.risk_reason == "stale_current_price"
     assert saved.emergency_confirmations == 0
     assert saved.emergency_reason is None
-    assert client.orders == []
-
-
-def test_confirmed_crash_without_hunt_enters_halt_in_live_mode(tmp_path):
-    path = tmp_path / "auto.json"
-    client = FakeCycleClient()
-    client.get_accounts = lambda: [
-        {"currency": "HUNT", "balance": "0", "avg_buy_price": "110"},
-        {"currency": "KRW", "balance": "1000000", "avg_buy_price": "0"},
-    ]
-    save_auto_state(AutoTradeState(phase="buy_2", emergency_confirmations=1), path)
-
-    result = run_auto_cycle(
-        client=client,
-        notifier=FakeNotifier(),
-        state_path=path,
-        live=True,
-        now=client.now,
-    )
-
-    assert result.action == "emergency_halt_no_position"
-    assert load_auto_state(path).phase == "emergency_halt"
     assert client.orders == []

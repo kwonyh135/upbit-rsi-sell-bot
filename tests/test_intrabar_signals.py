@@ -9,6 +9,7 @@ from huntbot.intrabar_signals import (
     mature_held_signal,
     observe_signal,
     provisional_rsi,
+    threshold_action,
 )
 from huntbot.second_data import SecondCandle
 
@@ -61,6 +62,14 @@ def test_provisional_rsi_replaces_only_unfinished_close():
     expected = rsi([float(value) for value in [*closes, Decimal("90")]], period=14)[-1]
 
     assert provisional_rsi(closes, Decimal("90"), period=14) == expected
+
+
+def test_threshold_action_uses_approved_sell_levels():
+    common = {"phase": "sell_1", "has_hunt": True, "has_krw": False}
+
+    assert threshold_action(rsi_value=55.9, **common) is None
+    assert threshold_action(rsi_value=56, **common) == "sell_1"
+    assert threshold_action(rsi_value=61, **common) == "sell_2"
 
 
 def test_immediate_signals_on_first_threshold_crossing():

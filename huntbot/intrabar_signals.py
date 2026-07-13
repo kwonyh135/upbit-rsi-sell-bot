@@ -4,6 +4,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Sequence
 
+from huntbot.config import BUY_RSI_1, BUY_RSI_2, SELL_RSI_1, SELL_RSI_2
 from huntbot.indicators import rsi
 from huntbot.second_data import SecondCandle
 
@@ -104,13 +105,13 @@ def threshold_action(
 ) -> str | None:
     if rsi_value is None:
         return None
-    if rsi_value >= 65 and has_hunt:
+    if rsi_value >= SELL_RSI_2 and has_hunt:
         return "sell_2"
-    if rsi_value >= 60 and has_hunt and phase != "sell_2":
+    if rsi_value >= SELL_RSI_1 and has_hunt and phase != "sell_2":
         return "sell_1"
     if phase == "buy_2":
-        return "buy_2" if rsi_value <= 40 and has_krw else None
-    return "buy_1" if rsi_value <= 45 and has_krw else None
+        return "buy_2" if rsi_value <= BUY_RSI_2 and has_krw else None
+    return "buy_1" if rsi_value <= BUY_RSI_1 and has_krw else None
 
 
 def observe_signal(
