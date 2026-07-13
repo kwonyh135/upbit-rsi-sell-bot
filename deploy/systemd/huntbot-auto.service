@@ -1,0 +1,24 @@
+[Unit]
+Description=KRW-HUNT unattended auto-trading bot
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=huntbot
+Group=huntbot
+WorkingDirectory=/opt/huntbot/app
+EnvironmentFile=/opt/huntbot/shared/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/huntbot/venv/bin/python -m huntbot run-auto-5m --live
+Restart=on-failure
+RestartSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/huntbot/shared
+
+[Install]
+WantedBy=multi-user.target

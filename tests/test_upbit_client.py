@@ -39,6 +39,19 @@ def test_public_candles_do_not_include_auth_header():
     assert headers is None
 
 
+def test_public_second_candles_use_cursor_without_auth_header():
+    session = FakeSession()
+    client = UpbitClient(access_key="access", secret_key="s" * 32, session=session)
+
+    client.get_second_candles("KRW-HUNT", count=200, to="2026-06-30T00:00:00Z")
+
+    method, url, params, headers, timeout = session.calls[0]
+    assert method == "GET"
+    assert url.endswith("/v1/candles/seconds")
+    assert params == {"market": "KRW-HUNT", "count": 200, "to": "2026-06-30T00:00:00Z"}
+    assert headers is None
+
+
 def test_public_orderbook_requests_best_level_without_auth_header():
     session = FakeSession()
     client = UpbitClient(access_key="access", secret_key="s" * 32, session=session)

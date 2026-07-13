@@ -28,6 +28,10 @@ class AutoTradeState:
     pending_order: PendingOrder | None = None
     emergency_confirmations: int = 0
     emergency_reason: str | None = None
+    rsi_signal_action: str | None = None
+    rsi_signal_started_at: str | None = None
+    rsi_signal_last_seen_at: str | None = None
+    rsi_signal_candle: str | None = None
 
 
 def load_auto_state(path: Path = AUTO_STATE_PATH) -> AutoTradeState:
@@ -52,6 +56,10 @@ def load_auto_state(path: Path = AUTO_STATE_PATH) -> AutoTradeState:
         pending_order=pending,
         emergency_confirmations=int(data.get("emergency_confirmations", 0)),
         emergency_reason=data.get("emergency_reason"),
+        rsi_signal_action=data.get("rsi_signal_action"),
+        rsi_signal_started_at=data.get("rsi_signal_started_at"),
+        rsi_signal_last_seen_at=data.get("rsi_signal_last_seen_at"),
+        rsi_signal_candle=data.get("rsi_signal_candle"),
     )
 
 

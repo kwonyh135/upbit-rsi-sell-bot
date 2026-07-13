@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -12,6 +13,38 @@ from huntbot.upbit_client import UpbitClient
 
 DASHBOARD_DB_PATH = Path("data/dashboard/huntbot-dashboard.sqlite3")
 AUTO_LOG_PATH = LOG_DIR / "huntbot-auto.log"
+REMOTE_RUNTIME_ROOT = Path("data/remote-runtime")
+
+
+@dataclass(frozen=True)
+class RuntimePaths:
+    state_path: Path
+    log_path: Path
+    source: str
+    process_running: bool | None
+
+
+def resolve_runtime_paths(
+    *,
+    remote_root: Path = REMOTE_RUNTIME_ROOT,
+    local_state: Path = AUTO_STATE_PATH,
+    local_log: Path = AUTO_LOG_PATH,
+) -> RuntimePaths:
+    remote_state = remote_root / "state" / "auto-trading.json"
+    remote_log = remote_root / "logs" / "huntbot-auto.log"
+    if remote_state.exists() and remote_log.exists():
+        return RuntimePaths(
+            state_path=remote_state,
+            log_path=remote_log,
+            source="aws-download",
+            process_running=True,
+        )
+    return RuntimePaths(
+        state_path=local_state,
+        log_path=local_log,
+        source="local",
+        process_running=None,
+    )
 
 
 def next_action_text(phase: str) -> str:
@@ -101,14 +134,17 @@ def main() -> None:
 
 def _collect_dashboard_data(collector, store: DashboardStore) -> dict:
     now = datetime.now(timezone.utc)
+    runtime_paths = resolve_runtime_paths()
     runtime = inspect_runtime(
-        state_path=AUTO_STATE_PATH,
-        log_path=AUTO_LOG_PATH,
+        state_path=runtime_paths.state_path,
+        log_path=runtime_paths.log_path,
         now=now,
+        process_running=runtime_paths.process_running,
     )
+    runtime["source"] = runtime_paths.source
     sync_error = None
     try:
-        collector.sync_orders(now=now, log_path=AUTO_LOG_PATH)
+        collector.sync_orders(now=now, log_path=runtime_paths.log_path)
     except Exception as exc:
         sync_error = f"{type(exc).__name__}: {exc}"
         store.set_meta("last_error", sync_error)

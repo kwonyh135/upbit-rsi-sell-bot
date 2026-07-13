@@ -47,7 +47,8 @@ the auto-trading state.
 Install the dashboard dependencies:
 
 ```powershell
-& "C:\Users\김혜령\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" -m pip install -e ".[test]"
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[test]"
 ```
 
 Start the localhost-only dashboard:
@@ -143,24 +144,33 @@ Dry-run still needs valid Upbit API keys because it reads real balances, but it 
 
 ## Unattended Auto Mode
 
-The unattended mode checks prices every 10 seconds. Normal RSI signals use only completed 5-minute candles and each candle is processed once.
+The unattended mode checks prices every 10 seconds. Normal orders use provisional
+five-minute RSI: completed candle closes initialize RSI and the validated current
+best bid acts as the active candle close. The same buy or sell condition must be
+observed continuously for at least 30 seconds before an order is submitted. A
+condition change, data error, emergency risk, or observation gap over 20 seconds
+resets confirmation. Logs show `status=confirming` while the timer is active.
+
+Only normal RSI timing changed. Split sizing and the `60`/`65`/`45`/`40`
+thresholds are unchanged, and completed-candle emergency protection still runs
+before every normal RSI decision.
 
 Start with one read-only cycle:
 
 ```powershell
-& "C:\Users\김혜령\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" -m huntbot run-auto-5m --dry-run --once
+.\.venv\Scripts\python.exe -m huntbot run-auto-5m --dry-run --once
 ```
 
 Then run continuous dry-run for several days:
 
 ```powershell
-& "C:\Users\김혜령\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" -m huntbot run-auto-5m --dry-run
+.\.venv\Scripts\python.exe -m huntbot run-auto-5m --dry-run
 ```
 
 Live auto mode:
 
 ```powershell
-& "C:\Users\김혜령\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" -m huntbot run-auto-5m --live
+.\.venv\Scripts\python.exe -m huntbot run-auto-5m --live
 ```
 
 Logs are written to `logs/huntbot-auto.log`.
@@ -169,19 +179,23 @@ Logs are written to `logs/huntbot-auto.log`.
 
 Emergency protection has priority over RSI trading:
 
-- Best bid is at least `7%` below the highest traded price in the latest five-minute time window, or
-- Current price is at least `10%` below the Upbit HUNT average buy price.
-- The best bid comes from Upbit's current orderbook, so missing 1-minute candles during no-trade periods do not stop the bot.
-- The risk must be observed twice consecutively, 10 seconds apart.
-- The first risky observation already blocks normal RSI orders.
+- A completed five-minute candle closes at least `6%` below its own high, or
+- A completed five-minute candle closes at least `12%` below the Upbit HUNT average buy price.
+- The two newest risky completed candles must be exactly five minutes apart. A missing no-trade candle breaks confirmation.
+- The first risky completed candle already blocks normal RSI orders without placing an emergency order.
 - A confirmed risk sells all available HUNT at market.
 - After confirmed liquidation, the bot enters `emergency_halt` and cannot buy again automatically.
+- Repeated 10-second polling of the same completed candle does not increase confirmations.
 
-Local unlock requires:
+Local unlock has no cooldown and requires:
 
 ```text
 UNLOCK KRW-HUNT
 ```
+
+Unlock is allowed only after the emergency order is reconciled and
+`pending_order` is null. It resets the strategy to `sell_1`; no Telegram or
+automatic unlock is available.
 
 ## Telegram
 
@@ -219,3 +233,35 @@ python -m huntbot report-split-5m
 ```
 
 Open `docs/split-buyback-events-5m.html` to see the full backtest summary and recent 90-day buy/sell event table.
+
+## Bitget BTC Futures Research
+
+Run the research-only six-month BTCUSDT perpetual-futures comparison:
+
+```powershell
+.\.venv\Scripts\python.exe -m huntbot backtest-bitget-btc --months 6
+.\.venv\Scripts\python.exe -m huntbot optimize-bitget-btc-rsi --months 6
+```
+
+This compares cash, BTC 1x buy-and-hold, long-only, short-only,
+bidirectional, and regime-filtered bidirectional RSI strategies. It uses
+public Bitget data, 1x exposure, taker fees, adverse slippage, and historical
+funding. It does not load API secrets, place orders, modify the HUNT bot, or
+deploy to AWS.
+
+The RSI optimizer searches long-only, bidirectional, and regime-filtered RSI
+threshold combinations, then writes:
+
+- `docs/bitget-btc-rsi-optimization-latest.md`
+- `docs/bitget-btc-rsi-optimization-latest.html`
+- `data/backtests/bitget-btc-rsi-optimization-latest.json`
+
+## AWS EC2 Ubuntu
+
+AWS에서는 `systemd`가 봇을 한 개만 실행하고 장애 시 재시작합니다. API 키, 거래 상태, 로그는 코드 배포와 분리된 `/opt/huntbot/shared`에 유지됩니다.
+
+```bash
+sudo bash deploy/install-ubuntu.sh
+```
+
+설치 직후 라이브 거래는 자동 시작되지 않습니다. Elastic IP 설정, 기존 봇 정지, 상태파일 이전, dry-run, 서비스 시작 순서는 [AWS EC2 운영 런북](docs/aws-ec2-runbook.md)을 따르세요.

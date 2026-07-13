@@ -37,6 +37,19 @@ class UpbitClient:
         time.sleep(0.12)
         return response.json()
 
+    def get_second_candles(self, market: str, *, count: int = 200, to: str | None = None) -> list[dict]:
+        params = {"market": market, "count": count}
+        if to:
+            params["to"] = to
+        response = self.session.get(
+            f"{self.server_url}/v1/candles/seconds",
+            params=params,
+            timeout=10,
+        )
+        response.raise_for_status()
+        time.sleep(0.12)
+        return response.json()
+
     def get_orderbook(self, market: str, *, count: int = 1) -> dict:
         response = self.session.get(
             f"{self.server_url}/v1/orderbook",

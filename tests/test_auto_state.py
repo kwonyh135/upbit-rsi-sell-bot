@@ -31,6 +31,33 @@ def test_auto_state_defaults_when_file_is_missing(tmp_path):
     assert load_auto_state(tmp_path / "missing.json") == AutoTradeState()
 
 
+def test_legacy_auto_state_defaults_rsi_confirmation_to_empty(tmp_path):
+    path = tmp_path / "auto.json"
+    path.write_text('{"phase": "buy_1"}', encoding="utf-8")
+
+    state = load_auto_state(path)
+
+    assert state.rsi_signal_action is None
+    assert state.rsi_signal_started_at is None
+    assert state.rsi_signal_last_seen_at is None
+    assert state.rsi_signal_candle is None
+
+
+def test_auto_state_round_trips_rsi_confirmation(tmp_path):
+    path = tmp_path / "auto.json"
+    state = AutoTradeState(
+        phase="buy_1",
+        rsi_signal_action="buy_1",
+        rsi_signal_started_at="2026-07-02T00:00:00+00:00",
+        rsi_signal_last_seen_at="2026-07-02T00:00:10+00:00",
+        rsi_signal_candle="2026-07-02T00:00:00+00:00",
+    )
+
+    save_auto_state(state, path)
+
+    assert load_auto_state(path) == state
+
+
 def test_auto_state_save_replaces_existing_json(tmp_path):
     path = tmp_path / "auto.json"
     path.write_text('{"phase": "broken"}', encoding="utf-8")

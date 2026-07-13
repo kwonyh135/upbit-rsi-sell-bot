@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $TaskName = "HuntBot-Auto-5m"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$Python = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
+$Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 
 if (-not (Test-Path -LiteralPath $Python)) {
     throw "Python executable not found: $Python"

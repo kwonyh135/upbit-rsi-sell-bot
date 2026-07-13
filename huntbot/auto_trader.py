@@ -1,20 +1,29 @@
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
 
 from huntbot.auto_state import AUTO_STATE_PATH, AutoTradeState, PendingOrder, load_auto_state, save_auto_state
-from huntbot.config import MARKET, RSI_PERIOD
-from huntbot.indicators import rsi
+from huntbot.config import (
+    AUTO_RSI_HOLD_SECONDS,
+    AUTO_RSI_MAX_GAP_SECONDS,
+    BUY_RSI_1,
+    BUY_RSI_2,
+    EMERGENCY_FLOOR_PRICE_KRW,
+    MARKET,
+    RSI_PERIOD,
+    SELL_RSI_1,
+    SELL_RSI_2,
+)
+from huntbot.intrabar_signals import five_minute_bucket, provisional_rsi, threshold_action
+from huntbot.live_signal import clear_rsi_confirmation, update_rsi_confirmation
 from huntbot.market_data import fetch_latest_candles, latest_completed_candle
 from huntbot.notifier import (
     NotificationError,
-    emergency_detected_message,
     order_submitted_message,
     trade_completed_message,
 )
-from huntbot.risk import evaluate_crash_risk
 
 
 @dataclass(frozen=True)
@@ -76,19 +85,17 @@ def select_auto_action(
         )
     if rsi_value is None or candle_timestamp is None or candle_timestamp == state.last_completed_candle:
         return None
-    if state.phase == "sell_1" and rsi_value >= 60 and hunt_balance > 0:
-        return AutoAction("sell_1", "sell", hunt_balance / Decimal("2"), "sell_2", candle_timestamp, rsi_value, "rsi")
-    if state.phase == "sell_2" and rsi_value >= 65 and hunt_balance > 0:
+    if rsi_value >= SELL_RSI_2 and hunt_balance > 0:
         return AutoAction("sell_2", "sell", hunt_balance, "buy_1", candle_timestamp, rsi_value, "rsi")
-    if state.phase == "sell_2" and rsi_value <= 45 and krw_balance > 0:
-        return AutoAction("buy_1", "buy", krw_balance / Decimal("2"), "buy_2", candle_timestamp, rsi_value, "rsi")
-    if state.phase == "buy_1" and rsi_value <= 45 and krw_balance > 0:
-        return AutoAction("buy_1", "buy", krw_balance / Decimal("2"), "buy_2", candle_timestamp, rsi_value, "rsi")
-    if state.phase == "buy_2" and rsi_value >= 60 and hunt_balance > 0:
+    if rsi_value >= SELL_RSI_1 and hunt_balance > 0 and state.phase != "sell_2":
         return AutoAction("sell_1", "sell", hunt_balance / Decimal("2"), "sell_2", candle_timestamp, rsi_value, "rsi")
-    if state.phase == "buy_2" and rsi_value <= 40 and krw_balance > 0:
-        fee_safe_amount = krw_balance / (Decimal("1") + bid_fee)
-        return AutoAction("buy_2", "buy", fee_safe_amount, "sell_1", candle_timestamp, rsi_value, "rsi")
+    if state.phase == "buy_2":
+        if rsi_value <= BUY_RSI_2 and krw_balance > 0:
+            fee_safe_amount = krw_balance / (Decimal("1") + bid_fee)
+            return AutoAction("buy_2", "buy", fee_safe_amount, "sell_1", candle_timestamp, rsi_value, "rsi")
+        return None
+    if rsi_value <= BUY_RSI_1 and krw_balance > 0:
+        return AutoAction("buy_1", "buy", krw_balance / Decimal("2"), "buy_2", candle_timestamp, rsi_value, "rsi")
     return None
 
 
@@ -157,12 +164,23 @@ def run_auto_cycle(
             average_loss_pct=None,
             order_uuid=workflow.order_uuid,
         )
+    if state.phase == "emergency_halt":
+        return AutoCycleResult(
+            status="halted",
+            phase=state.phase,
+            action=None,
+            current_price=None,
+            rsi_value=None,
+            risk_confirmed=False,
+            risk_reason=state.emergency_reason,
+            high_drop_pct=None,
+            average_loss_pct=None,
+        )
 
     accounts = client.get_accounts()
     hunt_account = _find_account(accounts, "HUNT")
     krw_account = _find_account(accounts, "KRW")
     hunt_balance = Decimal(str(hunt_account.get("balance", "0")))
-    average_buy_price = Decimal(str(hunt_account.get("avg_buy_price", "0")))
     krw_balance = Decimal(str(krw_account.get("balance", "0")))
 
     orderbook = client.get_orderbook(MARKET, count=1)
@@ -173,7 +191,14 @@ def run_auto_cycle(
         else None
     )
     orderbook_timestamp = orderbook.get("timestamp")
-    if current_price is None or orderbook_timestamp is None:
+    if current_price is None or current_price <= 0 or orderbook_timestamp is None:
+        state = clear_rsi_confirmation(state)
+        save_auto_state(state, state_path)
+        data_error = (
+            "invalid_current_price"
+            if current_price is not None and current_price <= 0
+            else "missing_current_price"
+        )
         return AutoCycleResult(
             "data_error",
             state.phase,
@@ -181,7 +206,7 @@ def run_auto_cycle(
             None,
             None,
             False,
-            "missing_current_price",
+            data_error,
             None,
             None,
         )
@@ -189,16 +214,10 @@ def run_auto_cycle(
         int(orderbook_timestamp) / 1000,
         tz=timezone.utc,
     )
-    minute_candles = fetch_latest_candles(client, MARKET, unit=1, count=5)
-    risk = evaluate_crash_risk(
-        minute_candles=minute_candles,
-        current_price=current_price,
-        current_price_timestamp=current_price_timestamp,
-        average_buy_price=average_buy_price,
-        previous_confirmations=state.emergency_confirmations,
-        now=now,
-    )
-    if risk.data_error:
+    if now - current_price_timestamp > timedelta(minutes=2):
+        state = clear_rsi_confirmation(state)
+        state = replace(state, emergency_confirmations=0, emergency_reason=None)
+        save_auto_state(state, state_path)
         return AutoCycleResult(
             "data_error",
             state.phase,
@@ -206,54 +225,61 @@ def run_auto_cycle(
             current_price,
             None,
             False,
-            risk.data_error,
-            risk.high_drop_pct,
-            risk.average_loss_pct,
-        )
-    state = replace(
-        state,
-        emergency_confirmations=risk.confirmations,
-        emergency_reason=risk.reason,
-    )
-    save_auto_state(state, state_path)
-
-    if risk.risky and not risk.confirmed:
-        return AutoCycleResult(
-            "emergency_pending",
-            state.phase,
+            "stale_current_price",
             None,
-            current_price,
             None,
-            False,
-            risk.reason,
-            risk.high_drop_pct,
-            risk.average_loss_pct,
         )
 
-    if risk.confirmed:
-        _notify_safely(
-            notifier,
-            emergency_detected_message(
-                reason=risk.reason or "unknown",
-                high_drop_pct=str(risk.high_drop_pct),
-                average_loss_pct=str(risk.average_loss_pct) if risk.average_loss_pct is not None else None,
-            ),
+    if current_price <= EMERGENCY_FLOOR_PRICE_KRW:
+        state = clear_rsi_confirmation(state)
+        state = replace(
+            state,
+            emergency_confirmations=0,
+            emergency_reason="fixed_floor_114_krw",
         )
         if hunt_balance <= 0:
-            next_state = replace(state, phase="emergency_halt", emergency_confirmations=0)
-            if live:
-                save_auto_state(next_state, state_path)
+            state = replace(state, phase="emergency_halt")
+            save_auto_state(state, state_path)
             return AutoCycleResult(
-                "halted" if live else "dry_run",
-                next_state.phase if live else state.phase,
+                "halted",
+                state.phase,
                 "emergency_halt_no_position",
                 current_price,
                 None,
                 True,
-                risk.reason,
-                risk.high_drop_pct,
-                risk.average_loss_pct,
+                "fixed_floor_114_krw",
+                None,
+                None,
             )
+        action = AutoAction(
+            "emergency_sell",
+            "sell",
+            hunt_balance,
+            "emergency_halt",
+            None,
+            None,
+            "fixed_floor_114_krw",
+        )
+        workflow = submit_auto_action(
+            client=client,
+            notifier=notifier,
+            state=state,
+            action=action,
+            state_path=state_path,
+            live=live,
+        )
+        return AutoCycleResult(
+            workflow.status,
+            workflow.state.phase,
+            action.action,
+            current_price,
+            None,
+            True,
+            action.reason,
+            None,
+            None,
+            workflow.order_uuid,
+        )
 
     five_minute_candles = fetch_latest_candles(client, MARKET, unit=5, count=200)
     completed = latest_completed_candle(five_minute_candles, unit=5, now=now)
@@ -261,51 +287,89 @@ def run_auto_cycle(
         candle for candle in five_minute_candles
         if completed is not None and candle.timestamp <= completed.timestamp
     ]
+
     rsi_value = None
-    candle_timestamp = None
-    if completed is not None and len(completed_candles) >= RSI_PERIOD + 1:
-        rsi_value = rsi([float(candle.close) for candle in completed_candles], period=RSI_PERIOD)[-1]
-        candle_timestamp = completed.timestamp.isoformat()
+    candidate_candle = None
+    candidate_action = None
+    if completed is not None and len(completed_candles) >= RSI_PERIOD:
+        rsi_value = provisional_rsi(
+            [candle.close for candle in completed_candles],
+            current_price,
+            period=RSI_PERIOD,
+        )
+        candidate_candle = five_minute_bucket(current_price_timestamp).isoformat()
+        candidate_action = threshold_action(
+            state.phase,
+            rsi_value,
+            has_hunt=hunt_balance > 0,
+            has_krw=krw_balance > 0,
+        )
+
+    state, ready_candle = update_rsi_confirmation(
+        state,
+        candidate_action=candidate_action,
+        candidate_candle=candidate_candle,
+        now=now,
+        hold_seconds=AUTO_RSI_HOLD_SECONDS,
+        max_gap_seconds=AUTO_RSI_MAX_GAP_SECONDS,
+    )
+    save_auto_state(state, state_path)
+    if ready_candle is None:
+        return AutoCycleResult(
+            "confirming" if candidate_action is not None else "waiting",
+            state.phase,
+            None,
+            current_price,
+            rsi_value,
+            False,
+            None,
+            None,
+            None,
+        )
 
     chance = client.get_order_chance(MARKET)
-    bid_fee = Decimal(str(chance.get("bid_fee", "0")))
     action = select_auto_action(
         state=state,
         rsi_value=rsi_value,
-        candle_timestamp=candle_timestamp,
-        emergency_confirmed=risk.confirmed,
-        emergency_reason=risk.reason,
+        candle_timestamp=ready_candle,
+        emergency_confirmed=False,
+        emergency_reason=None,
         hunt_balance=hunt_balance,
         krw_balance=krw_balance,
-        bid_fee=bid_fee,
+        bid_fee=Decimal(str(chance.get("bid_fee", "0"))),
     )
     if action is None:
-        if candle_timestamp and candle_timestamp != state.last_completed_candle:
-            state = replace(state, last_completed_candle=candle_timestamp)
-            save_auto_state(state, state_path)
+        state = clear_rsi_confirmation(state)
+        save_auto_state(state, state_path)
         return AutoCycleResult(
             "waiting",
             state.phase,
             None,
             current_price,
             rsi_value,
-            risk.confirmed,
-            risk.reason,
-            risk.high_drop_pct,
-            risk.average_loss_pct,
+            False,
+            None,
+            None,
+            None,
         )
     if not _meets_minimum_order(action, current_price, chance):
+        state = replace(
+            clear_rsi_confirmation(state),
+            last_completed_candle=ready_candle,
+        )
+        save_auto_state(state, state_path)
         return AutoCycleResult(
             "below_minimum",
             state.phase,
             action.action,
             current_price,
             rsi_value,
-            risk.confirmed,
-            risk.reason,
-            risk.high_drop_pct,
-            risk.average_loss_pct,
+            False,
+            None,
+            None,
+            None,
         )
+    state = clear_rsi_confirmation(state)
     workflow = submit_auto_action(
         client=client,
         notifier=notifier,
@@ -320,10 +384,10 @@ def run_auto_cycle(
         action.action,
         current_price,
         rsi_value,
-        risk.confirmed,
-        risk.reason,
-        risk.high_drop_pct,
-        risk.average_loss_pct,
+        False,
+        None,
+        None,
+        None,
         workflow.order_uuid,
     )
 
